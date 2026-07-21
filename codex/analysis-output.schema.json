@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "trace_id": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+    "diagnosis": { "type": "string" },
+    "evidence": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "database": { "type": "string", "const": "mydatabase" },
+    "collection": { "type": "string", "const": "mycollection" },
+    "field": { "type": "string", "const": "searchField" },
+    "recommended_command": {
+      "type": "string",
+      "const": "docker exec mongodb sh /opt/aegis/mongodb-index.sh create"
+    },
+    "safe_to_remediate": { "type": "boolean" }
+  },
+  "required": [
+    "trace_id",
+    "diagnosis",
+    "evidence",
+    "database",
+    "collection",
+    "field",
+    "recommended_command",
+    "safe_to_remediate"
+  ],
+  "additionalProperties": false
+}

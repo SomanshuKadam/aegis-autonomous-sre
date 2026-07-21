@@ -1,0 +1,10 @@
+approval_policy = "never"
+sandbox_mode = "read-only"
+
+[mcp_servers.signoz]
+enabled = true
+required = true
+url = "http://localhost:8000/mcp"
+env_http_headers = { "SIGNOZ-API-KEY" = "SIGNOZ_API_KEY" }
+startup_timeout_sec = 20.0
+tool_timeout_sec = 120.0

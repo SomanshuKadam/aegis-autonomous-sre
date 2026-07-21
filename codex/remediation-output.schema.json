@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "trace_id": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+    "command": {
+      "type": "string",
+      "const": "docker exec mongodb sh /opt/aegis/mongodb-index.sh create"
+    },
+    "index_name": { "type": "string", "const": "searchField_1" },
+    "executed": { "type": "boolean", "const": true },
+    "verified": { "type": "boolean", "const": true },
+    "verification": { "type": "string" }
+  },
+  "required": ["trace_id", "command", "index_name", "executed", "verified", "verification"],
+  "additionalProperties": false
+}
