@@ -1,0 +1,177 @@
+{
+  "name": "Aegis - Autonomous SRE Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "signoz-alert",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "0d863ea7-74d2-4453-94e6-67cd922df037",
+      "name": "SigNoz Alert Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-1100, 0],
+      "webhookId": "aegis-signoz-alert"
+    },
+    {
+      "parameters": {
+        "jsCode": "const payload = $json.body ?? $json;\nconst alert = Array.isArray(payload.alerts) ? payload.alerts[0] : {};\nconst traceId = payload.trace_id ?? alert?.labels?.trace_id ?? alert?.annotations?.trace_id;\nif (typeof traceId !== 'string' || !/^[0-9a-f]{32}$/i.test(traceId)) {\n  throw new Error('SigNoz payload must contain a 32-character trace_id');\n}\nreturn [{ json: { trace_id: traceId.toLowerCase(), alert_name: alert?.labels?.alertname ?? payload.alert_name ?? 'P95 latency > 2s', status: payload.status ?? 'firing', received_at: new Date().toISOString() } }];"
+      },
+      "id": "43d3642d-67e1-45b9-a76d-b9fabaf29d87",
+      "name": "Normalize Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-880, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { text: 'Aegis trigger: ' + $('Normalize Alert').item.json.alert_name, blocks: [ { type: 'header', text: { type: 'plain_text', text: '🚨 Aegis Trigger', emoji: true } }, { type: 'section', fields: [ { type: 'mrkdwn', text: '*Alert*\\n' + $('Normalize Alert').item.json.alert_name }, { type: 'mrkdwn', text: '*Status*\\n' + $('Normalize Alert').item.json.status }, { type: 'mrkdwn', text: '*Trace ID*\\n`' + $('Normalize Alert').item.json.trace_id + '`' }, { type: 'mrkdwn', text: '*Received*\\n' + $('Normalize Alert').item.json.received_at } ] }, { type: 'context', elements: [ { type: 'mrkdwn', text: 'Aegis is collecting trace evidence; no state has changed.' } ] } ] } }}",
+        "options": {}
+      },
+      "id": "8be75890-ac7d-4c1c-b5f5-32f033fd9837",
+      "name": "Slack - Trigger",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-650, 0]
+    },
+    {
+      "parameters": {
+        "command": "=sh /opt/aegis/aegis-agent.sh analyze {{ $('Normalize Alert').item.json.trace_id }}"
+      },
+      "id": "324473c8-2399-40ac-8e36-e79312ce0319",
+      "name": "Codex - Analyze Trace",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [-420, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $json.stdout?.trim();\nif (!raw) throw new Error('Codex analysis returned no output');\nconst analysis = JSON.parse(raw.split('\\n').at(-1));\nif (!analysis.safe_to_remediate) throw new Error('Codex did not authorize the bounded remediation');\nreturn [{ json: analysis }];"
+      },
+      "id": "f50ae1e2-d465-4873-a41d-71034ec5fe10",
+      "name": "Validate Analysis",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-190, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { text: 'Aegis analysis complete for trace ' + $('Validate Analysis').item.json.trace_id, blocks: [ { type: 'header', text: { type: 'plain_text', text: '🔎 Aegis Analysis', emoji: true } }, { type: 'section', text: { type: 'mrkdwn', text: '*Diagnosis*\\n' + $('Validate Analysis').item.json.diagnosis } }, { type: 'section', fields: [ { type: 'mrkdwn', text: '*Database*\\n`' + $('Validate Analysis').item.json.database + '`' }, { type: 'mrkdwn', text: '*Collection*\\n`' + $('Validate Analysis').item.json.collection + '`' }, { type: 'mrkdwn', text: '*Missing index field*\\n`' + $('Validate Analysis').item.json.field + '`' }, { type: 'mrkdwn', text: '*Safe to remediate*\\n`' + $('Validate Analysis').item.json.safe_to_remediate + '`' } ] }, { type: 'context', elements: [ { type: 'mrkdwn', text: '*Evidence:* ' + $('Validate Analysis').item.json.evidence.join(' • ') } ] } ] } }}",
+        "options": {}
+      },
+      "id": "7aa52da4-fbc5-42fb-8fc2-b518102112cd",
+      "name": "Slack - Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [40, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { text: 'Aegis remediation starting for trace ' + $('Validate Analysis').item.json.trace_id, blocks: [ { type: 'header', text: { type: 'plain_text', text: '🛠️ Aegis Remediation', emoji: true } }, { type: 'section', text: { type: 'mrkdwn', text: '*Approved bounded action*\\n```' + $('Validate Analysis').item.json.recommended_command + '```' } }, { type: 'context', elements: [ { type: 'mrkdwn', text: 'The command is non-interactive and restricted to creating `searchField_1`.' } ] } ] } }}",
+        "options": {}
+      },
+      "id": "0f87d2c8-fe80-4d5d-9fd2-f9658423bce1",
+      "name": "Slack - Remediation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [270, 0]
+    },
+    {
+      "parameters": {
+        "command": "=sh /opt/aegis/aegis-agent.sh remediate {{ $('Validate Analysis').item.json.trace_id }}"
+      },
+      "id": "7a73febf-906f-43c4-8a0c-e72219241472",
+      "name": "Codex - Apply Remediation",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [500, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $json.stdout?.trim();\nif (!raw) throw new Error('Codex remediation returned no output');\nconst result = JSON.parse(raw.split('\\n').at(-1));\nif (!result.executed || !result.verified || result.index_name !== 'searchField_1') {\n  throw new Error('Remediation verification failed');\n}\nreturn [{ json: result }];"
+      },
+      "id": "b4155705-5c82-4eeb-ae75-5ba34eddb7aa",
+      "name": "Validate Remediation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [730, 0]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.AEGIS_API_URL + '/search?q=needle' }}",
+        "options": {}
+      },
+      "id": "8f2b34a8-2949-49de-b0d2-1f98f55a2ef4",
+      "name": "Verify API Latency",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [960, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "if ($json.index_present !== true || Number($json.latency_ms) >= 2000) {\n  throw new Error(`Closed-loop verification failed: index=${$json.index_present}, latency_ms=${$json.latency_ms}`);\n}\nreturn items;"
+      },
+      "id": "f884973d-dde4-4faf-bd25-fdb48e795f0b",
+      "name": "Assert Resolution",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1190, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { text: 'Aegis resolved trace ' + $('Validate Remediation').item.json.trace_id, blocks: [ { type: 'header', text: { type: 'plain_text', text: '✅ Aegis Resolution', emoji: true } }, { type: 'section', fields: [ { type: 'mrkdwn', text: '*Index*\\n`' + $('Validate Remediation').item.json.index_name + '`' }, { type: 'mrkdwn', text: '*Post-fix latency*\\n`' + $('Assert Resolution').item.json.latency_ms + ' ms`' }, { type: 'mrkdwn', text: '*Trace ID*\\n`' + $('Validate Remediation').item.json.trace_id + '`' }, { type: 'mrkdwn', text: '*Verification*\\nPassed' } ] }, { type: 'context', elements: [ { type: 'mrkdwn', text: $('Validate Remediation').item.json.verification } ] } ] } }}",
+        "options": {}
+      },
+      "id": "677864bc-4d9a-4e83-adc5-7cb9ca27bd26",
+      "name": "Slack - Resolution",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1420, 0]
+    }
+  ],
+  "connections": {
+    "SigNoz Alert Webhook": { "main": [[{ "node": "Normalize Alert", "type": "main", "index": 0 }]] },
+    "Normalize Alert": { "main": [[{ "node": "Slack - Trigger", "type": "main", "index": 0 }]] },
+    "Slack - Trigger": { "main": [[{ "node": "Codex - Analyze Trace", "type": "main", "index": 0 }]] },
+    "Codex - Analyze Trace": { "main": [[{ "node": "Validate Analysis", "type": "main", "index": 0 }]] },
+    "Validate Analysis": { "main": [[{ "node": "Slack - Analysis", "type": "main", "index": 0 }]] },
+    "Slack - Analysis": { "main": [[{ "node": "Slack - Remediation", "type": "main", "index": 0 }]] },
+    "Slack - Remediation": { "main": [[{ "node": "Codex - Apply Remediation", "type": "main", "index": 0 }]] },
+    "Codex - Apply Remediation": { "main": [[{ "node": "Validate Remediation", "type": "main", "index": 0 }]] },
+    "Validate Remediation": { "main": [[{ "node": "Verify API Latency", "type": "main", "index": 0 }]] },
+    "Verify API Latency": { "main": [[{ "node": "Assert Resolution", "type": "main", "index": 0 }]] },
+    "Assert Resolution": { "main": [[{ "node": "Slack - Resolution", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "versionId": "815c5be1-83ec-471a-acf9-a6fe87f10220",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "id": "AEGIS_LOCAL_V1",
+  "tags": []
+}
