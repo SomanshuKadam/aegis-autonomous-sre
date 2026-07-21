@@ -1,0 +1,40 @@
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #e8f0f2;
+  background: #071018;
+  font-synthesis: none;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; min-height: 100vh; background: radial-gradient(circle at 78% 5%, #11312f 0, #071018 34%); }
+body::before { content: ""; position: fixed; inset: 0; pointer-events: none; opacity: .08; background-image: linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px); background-size: 48px 48px; }
+main { width: min(1180px, calc(100% - 40px)); margin: 0 auto; padding: 28px 0 64px; position: relative; }
+header { display: flex; align-items: center; gap: 16px; padding-bottom: 26px; border-bottom: 1px solid #23404a; }
+.brand-mark { display: grid; place-items: center; width: 48px; height: 48px; color: #071018; background: #69f0c3; font-size: 25px; font-weight: 800; clip-path: polygon(50% 0, 100% 24%, 91% 82%, 50% 100%, 9% 82%, 0 24%); }
+h1, h2, h3, p { margin: 0; }
+h1 { font-size: 18px; letter-spacing: -.02em; }
+.eyebrow { color: #69f0c3; font: 500 11px/1.5 ui-monospace, "Cascadia Code", monospace; letter-spacing: .14em; }
+.status { margin-left: auto; padding: 9px 13px; border: 1px solid #294a51; border-radius: 99px; font: 500 12px ui-monospace, "Cascadia Code", monospace; }
+.status i { display: inline-block; width: 7px; height: 7px; margin-right: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 12px currentColor; }
+.healthy { color: #69f0c3; } .critical { color: #ff6e73; } .idle { color: #8ba0a8; }
+.hero { min-height: 390px; display: grid; grid-template-columns: 1.55fr .7fr; align-items: center; gap: 70px; border-bottom: 1px solid #23404a; }
+h2 { max-width: 720px; margin: 12px 0 20px; font-size: clamp(42px, 7vw, 76px); line-height: .99; letter-spacing: -.065em; }
+.lede { max-width: 620px; color: #9eb0b6; font-size: 16px; line-height: 1.65; }
+button { margin-top: 28px; padding: 14px 20px; border: 0; border-radius: 4px; background: #69f0c3; color: #071018; font: 700 13px ui-monospace, "Cascadia Code", monospace; cursor: pointer; }
+button:hover { background: #8affd8; transform: translateY(-1px); } button:disabled { opacity: .55; cursor: wait; }
+.metric-card { padding: 28px; border: 1px solid #294a51; background: #0b1821cc; box-shadow: 12px 12px 0 #0f2829; }
+.metric-card span, .metric-card small { display: block; color: #82969d; font: 12px ui-monospace, "Cascadia Code", monospace; }
+.metric-card strong { display: block; margin: 20px 0 10px; font: 500 clamp(38px, 5vw, 62px) ui-monospace, "Cascadia Code", monospace; }
+.error { margin: 24px 0; padding: 14px 18px; border-left: 3px solid #ff6e73; background: #2a141a; color: #ffb4b7; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; padding: 28px 0; }
+article, .pipeline { border: 1px solid #203b45; background: #0a151dcc; padding: 25px; }
+.card-title { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
+.card-title span { color: #69f0c3; font: 12px ui-monospace, "Cascadia Code", monospace; } h3 { font-size: 15px; }
+dl { margin: 0; } dl div { display: flex; justify-content: space-between; gap: 20px; padding: 11px 0; border-top: 1px solid #172e37; }
+dt { color: #81969e; font-size: 12px; } dd { margin: 0; text-align: right; font: 500 12px ui-monospace, "Cascadia Code", monospace; }
+.trace { max-width: 250px; overflow: hidden; text-overflow: ellipsis; }
+.pipeline { margin-top: 0; } .phases { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 23px; }
+.phases div { position: relative; padding: 18px; border-left: 1px solid #294a51; }
+.phases b { display: block; margin-bottom: 26px; color: #69f0c3; font: 500 12px ui-monospace, "Cascadia Code", monospace; }
+.phases span { display: block; font-weight: 700; } .phases small { color: #81969e; font-size: 11px; }
+@media (max-width: 760px) { main { width: min(100% - 24px, 1180px); } header .status { display: none; } .hero { grid-template-columns: 1fr; gap: 30px; padding: 70px 0; } .grid { grid-template-columns: 1fr; } .phases { grid-template-columns: 1fr 1fr; } }
