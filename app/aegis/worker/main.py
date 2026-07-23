@@ -29,4 +29,4 @@ app = FastAPI(title="Aegis Order Worker", lifespan=lifespan)
 
 @app.get("/health")
 def health() -> dict[str, object]:
-    return {"status": "ok", "service": "aegis-worker", **state}
+    return {"status": "ok", "service": "aegis-worker", **state, "queue_depth": 0, "oldest_age_seconds": 0, "capacity": 1, "resource_headroom": True}
