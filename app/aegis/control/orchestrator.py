@@ -18,6 +18,7 @@ from aegis.control.budgets import InvestigationBudget
 from aegis.control.evidence import ReadOnlyEvidence
 from aegis.control.incidents import IncidentStore
 from aegis.control.models import IncidentState
+from aegis.control.state_machine import TERMINAL
 from aegis.control.policy import evaluate
 from aegis.control.verification import verify_profile
 from aegis.config import Settings, get_settings
@@ -48,7 +49,7 @@ class IncidentOrchestrator:
         with self.tracer.start_as_current_span("incident.process") as span:
             span.set_attribute("aegis.incident_id", incident_id)
             span.set_attribute("aegis.incident.category", str(incident["category"]))
-            return self._process(incident_id, incident)
+            return self._record_terminal_notification(self._process(incident_id, incident))
 
     def _process(self, incident_id: str, incident: dict[str, object]) -> OrchestrationResult:
         state = IncidentState(str(incident["state"]))
@@ -111,7 +112,28 @@ class IncidentOrchestrator:
         with self.tracer.start_as_current_span("incident.approval") as span:
             span.set_attribute("aegis.incident_id", incident_id)
             span.set_attribute("aegis.approval.decision", decision)
-            return self._approve(incident_id, incident, approval_id, approver, decision)
+            return self._record_terminal_notification(self._approve(incident_id, incident, approval_id, approver, decision))
+
+    def _record_terminal_notification(self, result: OrchestrationResult) -> OrchestrationResult:
+        state = IncidentState(str(result.incident["state"]))
+        if state not in TERMINAL:
+            return result
+        existing = self.incidents.db["notifications"].find_one(
+            {"incident_id": result.incident["incident_id"], "channel": "console", "terminal_state": state.value}
+        )
+        if existing is None:
+            self.incidents.record(
+                "notifications",
+                str(result.incident["incident_id"]),
+                {
+                    "notification_id": new_id(),
+                    "channel": "console",
+                    "terminal_state": state.value,
+                    "state": "DELIVERED",
+                    "detail": f"terminal incident state {state.value} recorded for operations console",
+                },
+            )
+        return result
 
     def _approve(self, incident_id: str, incident: dict[str, object], approval_id: str, approver: str, decision: str) -> OrchestrationResult:
         if incident["state"] != IncidentState.APPROVAL_REQUIRED.value:
@@ -192,11 +214,11 @@ class IncidentOrchestrator:
             result = response.json()
         except httpx.HTTPError as exc:
             self.incidents.record("executions", incident_id, {"execution_id": execution_id, "idempotency_key": idempotency_key, "proposal_id": proposal["proposal_id"], "state": "FAILED", "attempt_number": 1, "error": str(exc)})
-            return self._rollback_or_escalate(incident_id, execution_id, proposal, {}, "action runner did not complete the approved action")
+            return self._rollback_or_escalate(incident_id, execution_id, idempotency_key, proposal, {}, "action runner did not complete the approved action")
         execution = {"execution_id": execution_id, "idempotency_key": idempotency_key, "proposal_id": proposal["proposal_id"], "state": str(result.get("state", "SUCCEEDED")), "attempt_number": 1, "runner_result": result, "previous_state": result.get("previous_state", {})}
         self.incidents.record("executions", incident_id, execution)
         if execution["state"] not in {"SUCCEEDED", "NOOP", "DUPLICATE"}:
-            return self._rollback_or_escalate(incident_id, execution_id, proposal, dict(execution["previous_state"]), "runner reported a non-successful action outcome")
+            return self._rollback_or_escalate(incident_id, execution_id, idempotency_key, proposal, dict(execution["previous_state"]), "runner reported a non-successful action outcome")
         self._advance_to(incident_id, IncidentState.VERIFYING, "Verify the intended state and a fresh business result")
         observed = self._verification_observation(proposal)
         expected = self._verification_expectation(proposal)
@@ -205,9 +227,9 @@ class IncidentOrchestrator:
         if verification["outcome"] == "VERIFIED":
             resolved = self._advance_to(incident_id, IncidentState.RESOLVED, "Registered action and fresh business behavior were verified")
             return OrchestrationResult(resolved, "RESOLVED", "notify operations")
-        return self._rollback_or_escalate(incident_id, execution_id, proposal, dict(execution["previous_state"]), "post-action verification did not satisfy the frozen criteria")
+        return self._rollback_or_escalate(incident_id, execution_id, idempotency_key, proposal, dict(execution["previous_state"]), "post-action verification did not satisfy the frozen criteria")
 
-    def _rollback_or_escalate(self, incident_id: str, execution_id: str, proposal: dict[str, object], previous_state: dict[str, object], reason: str) -> OrchestrationResult:
+    def _rollback_or_escalate(self, incident_id: str, execution_id: str, idempotency_key: str, proposal: dict[str, object], previous_state: dict[str, object], reason: str) -> OrchestrationResult:
         action = resolve(str(proposal["action_key"]))
         rollback_id = new_id()
         if not action.rollback_action or not previous_state:
@@ -218,7 +240,7 @@ class IncidentOrchestrator:
             response = httpx.post(
                 f"{self.settings.runner_url.rstrip('/')}/actions/rollback",
                 headers={"Authorization": f"Bearer {self.settings.runner_token.get_secret_value()}"},
-                json={"action_key": proposal["action_key"], "target": proposal["target"], "previous_state": previous_state},
+                json={"action_key": proposal["action_key"], "target": proposal["target"], "previous_state": previous_state, "idempotency_key": idempotency_key},
                 timeout=65,
             )
             response.raise_for_status()

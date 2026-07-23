@@ -33,11 +33,23 @@ class ApprovalStore:
         expires_at = record["expires_at"] if record else utc_now()
         if expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=utc_now().tzinfo)
-        if record is None or record["state"] != "PENDING" or expires_at < utc_now() or record["proposal_id"] != proposal["proposal_id"]:
+        if (
+            record is None
+            or record["state"] != "PENDING"
+            or expires_at < utc_now()
+            or record["proposal_id"] != proposal["proposal_id"]
+            or record["proposal_hash"] != self._proposal_hash(proposal)
+            or record["evidence_version"] != proposal["evidence_version"]
+        ):
             raise ValueError("approval is invalid, expired, already used, or does not match the proposal")
         state = "APPROVED" if decision == "APPROVED" else "REJECTED"
-        self.collection.update_one({"approval_id": approval_id, "state": "PENDING"}, {"$set": {"state": state, "approver": approver, "decided_at": utc_now()}})
-        record = self.collection.find_one({"approval_id": approval_id})
+        record = self.collection.find_one_and_update(
+            {"approval_id": approval_id, "incident_id": incident_id, "state": "PENDING", "proposal_hash": self._proposal_hash(proposal), "expires_at": {"$gte": utc_now()}},
+            {"$set": {"state": state, "approver": approver, "decided_at": utc_now()}},
+            return_document=True,
+        )
+        if record is None:
+            raise ValueError("approval was consumed concurrently")
         self.incidents._append(incident_id, "approval", "approval", state.lower(), "Exact approval decision recorded", record["decided_at"])
         record.pop("_id", None)
         return record
@@ -46,4 +58,5 @@ class ApprovalStore:
     def _proposal_hash(proposal: dict[str, object]) -> str:
         normalized = dict(proposal)
         normalized.pop("occurred_at", None)
+        normalized.pop("created_at", None)
         return canonical_hash(normalized)

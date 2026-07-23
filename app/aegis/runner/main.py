@@ -21,6 +21,7 @@ class RollbackRequest(BaseModel):
     action_key: str
     target: dict[str, object]
     previous_state: dict[str, object]
+    idempotency_key: str
 
 
 @app.post("/actions/rollback")
@@ -28,7 +29,7 @@ def rollback(payload: RollbackRequest, authorization: str | None = Header(defaul
     token = authorization.removeprefix("Bearer ") if authorization else ""
     if token != get_settings().runner_token.get_secret_value():
         raise HTTPException(status_code=401, detail="invalid runner credentials")
-    return executor.rollback(payload.action_key, payload.target, payload.previous_state)
+    return executor.rollback(payload.action_key, payload.target, payload.previous_state, payload.idempotency_key)
 
 
 @app.get("/health")

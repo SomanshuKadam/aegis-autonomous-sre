@@ -19,6 +19,10 @@
       "id": "process-incident", "name": "Process Incident Lifecycle", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [-20, 0]
     },
     {
+      "parameters": {"conditions": {"options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2}, "conditions": [{"leftValue": "={{ $env.SLACK_WEBHOOK_URL }}", "rightValue": "", "operator": {"type": "string", "operation": "notEmpty"}}]}, "options": {}},
+      "id": "slack-configured", "name": "Slack Webhook Configured", "type": "n8n-nodes-base.if", "typeVersion": 2.2, "position": [220, 80]
+    },
+    {
       "parameters": {"method": "POST", "url": "={{ $env.SLACK_WEBHOOK_URL }}", "sendBody": true, "specifyBody": "json", "jsonBody": "={{ {text: 'Aegis incident ' + $json.incident_id + ' reached ' + $json.state + ' (' + $json.outcome + '). Open http://localhost:3000/ops/incidents/' + $json.incident_id} }}", "options": {"retry": {"maxTries": 3}}},
       "id": "send-slack", "name": "Deliver Slack Lifecycle Update", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [240, 0], "onError": "continueRegularOutput"
     },
@@ -43,11 +47,12 @@
     "SigNoz Alert Webhook": {"main": [[{"node": "Normalize Correlated Alert", "type": "main", "index": 0}]]},
     "Normalize Correlated Alert": {"main": [[{"node": "Register Deduplicated Alert", "type": "main", "index": 0}]]},
     "Register Deduplicated Alert": {"main": [[{"node": "Process Incident Lifecycle", "type": "main", "index": 0}]]},
-    "Process Incident Lifecycle": {"main": [[{"node": "Deliver Slack Lifecycle Update", "type": "main", "index": 0}]]},
+    "Process Incident Lifecycle": {"main": [[{"node": "Slack Webhook Configured", "type": "main", "index": 0}]]},
+    "Slack Webhook Configured": {"main": [[{"node": "Deliver Slack Lifecycle Update", "type": "main", "index": 0}], [{"node": "Classify Notification Outcome", "type": "main", "index": 0}]]},
     "Deliver Slack Lifecycle Update": {"main": [[{"node": "Classify Notification Outcome", "type": "main", "index": 0}]]},
     "Classify Notification Outcome": {"main": [[{"node": "Record Independent Notification Outcome", "type": "main", "index": 0}]]},
     "Approval Resume Webhook": {"main": [[{"node": "Resume Approved Incident", "type": "main", "index": 0}]]},
-    "Resume Approved Incident": {"main": [[{"node": "Deliver Slack Lifecycle Update", "type": "main", "index": 0}]]}
+    "Resume Approved Incident": {"main": [[{"node": "Slack Webhook Configured", "type": "main", "index": 0}]]}
   },
   "active": true,
   "settings": {"executionOrder": "v1"},

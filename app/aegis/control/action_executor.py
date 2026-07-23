@@ -50,8 +50,21 @@ class ActionExecutor:
         self.executions.update_one({"idempotency_key": key}, {"$set": {"state": final_state, "result": result}})
         return {"idempotency_key": key, **result}
 
-    def rollback(self, action_key: str, target: dict[str, object], previous_state: dict[str, object]) -> dict[str, object]:
+    def rollback(self, action_key: str, target: dict[str, object], previous_state: dict[str, object], idempotency_key: str) -> dict[str, object]:
         action = validate_proposal(action_key, target, {"desired": int(previous_state["desired"])})
+        claim = self.executions.find_one_and_update(
+            {
+                "idempotency_key": idempotency_key,
+                "action_key": action_key,
+                "state": {"$in": ["SUCCEEDED", "NOOP"]},
+                "result.previous_state": previous_state,
+                "rollback_claimed": {"$ne": True},
+            },
+            {"$set": {"rollback_claimed": True}},
+            return_document=True,
+        )
+        if claim is None:
+            raise ValueError("rollback must match one successful runner execution and may only run once")
         if action.action_id == "inventory.restore_capacity":
             return self._set_service_capacity(self.settings.inventory_url, target, int(previous_state["desired"]), "inventory_dependency", rollback=True)
         if action.action_id == "worker.set_capacity":
