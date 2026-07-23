@@ -98,6 +98,7 @@ services:
       MONGODB_URI: mongodb://${MONGO_ROOT_USERNAME:-aegisadmin}:${MONGO_ROOT_PASSWORD:?MONGO_ROOT_PASSWORD must be set}@mongodb:27017/${MONGO_DATABASE:-mydatabase}?authSource=admin
       MONGO_DATABASE: ${MONGO_DATABASE:-mydatabase}
       OTEL_SERVICE_NAME: aegis-worker
+      AEGIS_API_URL: http://api:8081
     depends_on:
       mongodb:
         condition: service_healthy
@@ -121,6 +122,10 @@ services:
       MONGODB_URI: mongodb://${MONGO_ROOT_USERNAME:-aegisadmin}:${MONGO_ROOT_PASSWORD:?MONGO_ROOT_PASSWORD must be set}@mongodb:27017/${MONGO_DATABASE:-mydatabase}?authSource=admin
       MONGO_DATABASE: ${MONGO_DATABASE:-mydatabase}
       OTEL_SERVICE_NAME: aegis-workload
+      AEGIS_API_URL: http://api:8081
+      AEGIS_NORMAL_WORKLOAD_ENABLED: ${AEGIS_NORMAL_WORKLOAD_ENABLED:-true}
+      AEGIS_WORKLOAD_STATE_PATH: /state/runs.json
+      AEGIS_WORKLOAD_INTERVAL_SECONDS: ${AEGIS_WORKLOAD_INTERVAL_SECONDS:-5}
     depends_on:
       mongodb:
         condition: service_healthy
@@ -130,6 +135,8 @@ services:
       timeout: 3s
       retries: 20
     networks: [aegis]
+    volumes:
+      - workload-data:/state
     deploy:
       resources:
         limits:
@@ -228,6 +235,7 @@ services:
 volumes:
   mongodb-data:
   n8n-data:
+  workload-data:
 
 networks:
   aegis:
