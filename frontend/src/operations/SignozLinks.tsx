@@ -1,0 +1,2 @@
+type Links = Record<string, {url: string | null; reason: string | null}>;
+export function SignozLinks({links}: {links: Links}) { return <section aria-label="SigNoz context">{Object.entries(links).map(([name, link]) => link.url ? <a key={name} href={link.url} target="_blank" rel="noopener noreferrer">Open {name} in SigNoz</a> : <p key={name}>{name}: {link.reason ?? "unavailable"}</p>)}</section>; }

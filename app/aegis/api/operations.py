@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from aegis.control.read_models import incident_summary, overview
-from aegis.integrations.signoz_links import trace_link
+from aegis.integrations.signoz_links import context_links
 
 def create_router(store: object) -> APIRouter:
     router = APIRouter(prefix="/api/v1/operations", tags=["operations"])
@@ -18,6 +18,6 @@ def create_router(store: object) -> APIRouter:
         incident = store.items.get(incident_id)
         if incident is None: raise HTTPException(status_code=404, detail="incident not found")
         trace_id = request.query_params.get("trace_id")
-        incident["signoz"] = trace_link(trace_id, "aegis-api") if trace_id else {"url": None, "reason": "trace correlation unavailable"}
+        incident["signoz"] = context_links(trace_id, "aegis-api") if trace_id else {"trace": {"url": None, "reason": "trace correlation unavailable"}}
         return incident
     return router
