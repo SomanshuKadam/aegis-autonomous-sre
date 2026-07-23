@@ -9,6 +9,7 @@ from pymongo import MongoClient
 
 from aegis.control.action_registry import resolve
 from aegis.control.approvals import ApprovalStore
+from aegis.control.backlog_incident import classify_backlog
 from aegis.control.agents import collect, evaluate_hypotheses, plan, triage
 from aegis.control.budgets import InvestigationBudget
 from aegis.control.evidence import ReadOnlyEvidence
@@ -55,6 +56,13 @@ class IncidentOrchestrator:
         triage_result = triage(category, budget)
         self.incidents.record("agent_runs", incident_id, {"agent": "triage", "outcome": triage_result["outcome"], "category": category, "allowed_action": triage_result.get("allowed_actions"), "budget": budget.__dict__})
         evidence = self._evidence_for(incident)
+        if category == "order_backlog":
+            observation = dict(evidence[0].get("observation", {}))
+            disposition = classify_backlog(int(observation.get("queue_depth", 0)), int(observation.get("oldest_age_seconds", 0)), bool(observation.get("healthy_workers")), bool(observation.get("at_maximum")), bool(observation.get("headroom")))
+            if disposition["outcome"] != "ACTION_PROPOSED":
+                self.incidents.record("policy_decisions", incident_id, {"policy_decision_id": new_id(), "outcome": "ESCALATED", "reason": disposition["reason"], "risk": "LOW"})
+                escalated = self._advance_to(incident_id, IncidentState.ESCALATED, str(disposition["reason"]))
+                return OrchestrationResult(escalated, "ESCALATED", "no mutation")
         for item in evidence:
             self.incidents.record("evidence", incident_id, {"evidence_id": new_id(), "type": item["source"], "source": item["source"], "freshness": "FRESH" if item.get("fresh") else "STALE", "observation": item.get("observation", {}), "reference": {"category": category}, "required_for_mutation": True})
         usable = collect(evidence, budget)
@@ -116,9 +124,11 @@ class IncidentOrchestrator:
                 self.evidence.service_health("aegis-inventory", True),
             ]
         if category == "order_backlog":
+            health = httpx.get(f"{self.settings.worker_url.rstrip('/')}/health", timeout=10).json()
+            capacity = int(health.get("capacity", 0)); maximum = int(health.get("maximum", 4))
             return [
-                {"source": "queue_backlog", "fresh": True, "observation": {"target": target, "queue_depth": 10, "oldest_age_seconds": 31, "healthy_workers": True, "headroom": True}, "observed_at": now},
-                self.evidence.service_health("aegis-worker", True),
+                {"source": "queue_backlog", "fresh": True, "observation": {"target": target, "queue_depth": 10, "oldest_age_seconds": 31, "healthy_workers": health.get("status") == "ok", "headroom": bool(health.get("resource_headroom")), "at_maximum": capacity >= maximum, "capacity": capacity, "maximum": maximum}, "observed_at": now},
+                self.evidence.service_health("aegis-worker", health.get("status") == "ok"),
             ]
         return [self.evidence.unavailable("incident", f"unsupported incident category {category}")]
 
@@ -129,7 +139,8 @@ class IncidentOrchestrator:
         if category == "inventory_dependency":
             parameters = {"desired": 2}
         if category == "order_backlog":
-            parameters = {"desired": 2}
+            health = httpx.get(f"{self.settings.worker_url.rstrip('/')}/health", timeout=10).json()
+            parameters = {"desired": int(health.get("capacity", 1)) + 1}
         return {"proposal_id": new_id(), "incident_id": incident["incident_id"], "action_key": action_key, "target": target, "parameters": parameters, "desired_state": parameters, "evidence_version": int(incident.get("evidence_version", 1)), "created_at": utc_now()}
 
     def _dispatch_and_verify(self, incident_id: str, proposal: dict[str, object]) -> OrchestrationResult:

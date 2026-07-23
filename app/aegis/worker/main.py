@@ -31,7 +31,7 @@ app = FastAPI(title="Aegis Order Worker", lifespan=lifespan)
 
 @app.get("/health")
 def health() -> dict[str, object]:
-    return {"status": "ok", "service": "aegis-worker", **state, "queue_depth": 0, "oldest_age_seconds": 0, "capacity": capacity["desired"], "resource_headroom": capacity["desired"] < capacity["maximum"]}
+    return {"status": "ok", "service": "aegis-worker", **state, "queue_depth": 0, "oldest_age_seconds": 0, "capacity": capacity["desired"], "maximum": capacity["maximum"], "resource_headroom": capacity["desired"] < capacity["maximum"]}
 
 @app.post("/control/capacity")
 def set_capacity(desired: int, authorization: str | None = Header(default=None)) -> dict[str, object]:
