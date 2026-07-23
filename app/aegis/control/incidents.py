@@ -7,6 +7,8 @@ from pymongo import ASCENDING
 from pymongo.collection import Collection
 
 from aegis.config import Settings, get_settings
+from aegis.telemetry.incidents import record_stage
+from aegis.telemetry.logging import redact
 from aegis.control.models import IncidentState
 from aegis.control.state_machine import transition
 from aegis.integrations.mongodb import MongoStore
@@ -119,7 +121,7 @@ class IncidentStore:
         return {"incident": incident, "disposition": disposition, "command_id": command_id}
 
     def record(self, collection: str, incident_id: str, payload: dict[str, object]) -> dict[str, object]:
-        document = {**payload, "incident_id": incident_id, "occurred_at": utc_now()}
+        document = {**redact(payload), "incident_id": incident_id, "occurred_at": utc_now()}
         self.db[collection].insert_one(document)
         timeline_labels = {
             "evidence": ("evidence", "collected", "Current evidence snapshot collected"),
@@ -145,4 +147,8 @@ class IncidentStore:
             upsert=True,
             return_document=True,
         )["sequence"]
-        self.timeline.insert_one({"event_id": new_id(), "incident_id": incident_id, "sequence": sequence, "occurred_at": occurred_at, "stage": stage, "type": event_type, "outcome": outcome, "summary": summary, "actor": actor})
+        incident = self.incidents.find_one({"incident_id": incident_id}, {"category": 1, "trace_id": 1}) or {}
+        category = str(incident.get("category", "unknown"))
+        source_trace_id = str(incident.get("trace_id") or "")
+        self.timeline.insert_one({"event_id": new_id(), "incident_id": incident_id, "sequence": sequence, "occurred_at": occurred_at, "stage": stage, "type": event_type, "outcome": outcome, "summary": summary, "actor": actor, "category": category, "source_trace_id": source_trace_id or None})
+        record_stage(incident_id, stage, outcome, category=category, source_trace_id=source_trace_id or None)
