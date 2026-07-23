@@ -7,6 +7,7 @@ from aegis.config import get_settings
 from aegis.api.orchestration import router as orchestration_router
 from aegis.api.commerce import router as commerce_router
 from aegis.api.operations import create_router as create_operations_router
+from aegis.api.evaluation import router as evaluation_router
 from aegis.api.orchestration import incidents
 from opentelemetry import trace
 from pymongo import MongoClient
@@ -17,6 +18,7 @@ def create_app() -> FastAPI:
     app.include_router(orchestration_router)
     app.include_router(commerce_router)
     app.include_router(create_operations_router(incidents))
+    app.include_router(evaluation_router)
     settings = get_settings()
     client = MongoClient(settings.mongodb_uri.get_secret_value(), serverSelectionTimeoutMS=5000)
     collection = client[settings.mongo_database]["mycollection"]
