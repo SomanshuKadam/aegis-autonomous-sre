@@ -1,13 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
-
-type Incident = { incident_id: string; category: string; state: string };
-
+type Incident = { incident_id: string; category: string; state: string; created_at?: string };
 export function IncidentListPage() {
-  const [items, setItems] = useState<Incident[]>([]); const [activeOnly, setActiveOnly] = useState(false);
-  const [error, setError] = useState("");
-  useEffect(() => { api<{items: Incident[]}>("/operations/incidents").then((value) => setItems(value.items)).catch((reason: Error) => setError(reason.message)); }, []);
+  const [items, setItems] = useState<Incident[]>([]); const [activeOnly, setActiveOnly] = useState(false); const [error, setError] = useState(""); const [loading, setLoading] = useState(true);
+  useEffect(() => { api<{items: Incident[]}>("/operations/incidents").then((value) => setItems(value.items)).catch((reason: Error) => setError(reason.message)).finally(() => setLoading(false)); }, []);
   const visible = activeOnly ? items.filter((item) => !["RESOLVED", "FAILED", "BLOCKED", "ESCALATED"].includes(item.state)) : items;
-  return <main><h1>Incidents</h1><label><input type="checkbox" checked={activeOnly} onChange={(event) => setActiveOnly(event.target.checked)} /> Active only</label>{error && <p role="alert">{error}</p>}<ul>{visible.map((item) => <li key={item.incident_id}><Link to={`/ops/incidents/${item.incident_id}`}>{item.category}</Link> <span>{item.state}</span></li>)}</ul></main>;
+  return <main className="page"><div className="page-heading"><div><span className="section-label">Reliability events</span><h1>Incidents</h1><p>Investigate active and historical application incidents.</p></div><span className="record-count">{visible.length} records</span></div><section className="panel"><div className="toolbar"><label className="filter-control"><input type="checkbox" checked={activeOnly} onChange={(event) => setActiveOnly(event.target.checked)} /> Show active incidents only</label></div>{error ? <div className="notice error" role="alert">{error}</div> : loading ? <div className="empty-state">Loading incidents...</div> : visible.length === 0 ? <div className="empty-state"><b>No matching incidents</b><p>New alerts and historical events will appear in this table.</p></div> : <div className="table-wrap"><table><thead><tr><th>Incident</th><th>Category</th><th>Status</th><th>Created</th></tr></thead><tbody>{visible.map((item) => <tr key={item.incident_id}><td><Link className="incident-link" to={`/ops/incidents/${item.incident_id}`}>{item.incident_id.slice(0, 12)}</Link></td><td>{item.category.replaceAll("_", " ")}</td><td><span className="state-pill">{item.state}</span></td><td>{item.created_at ? new Date(item.created_at).toLocaleString() : "Not recorded"}</td></tr>)}</tbody></table></div>}</section></main>;
 }

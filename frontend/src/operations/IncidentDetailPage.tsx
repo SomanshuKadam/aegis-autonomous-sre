@@ -1,14 +1,11 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import { SignozLinks } from "./SignozLinks";
-
-type Detail = { incident_id: string; category: string; state: string; timeline: {state: string; at: string}[]; signoz: Record<string, {url: string | null; reason: string | null}> };
-
+type Detail = { incident_id: string; category: string; state: string; created_at?: string; timeline: {state: string; at: string}[]; signoz: Record<string, {url: string | null; reason: string | null}> };
 export function IncidentDetailPage() {
   const { incidentId = "" } = useParams(); const [incident, setIncident] = useState<Detail | null>(null); const [error, setError] = useState("");
   useEffect(() => { api<Detail>(`/operations/incidents/${incidentId}`).then(setIncident).catch((reason: Error) => setError(reason.message)); }, [incidentId]);
-  if (error) return <main><p role="alert">{error}</p></main>;
-  if (!incident) return <main><p>Loading incident</p></main>;
-  return <main><h1>{incident.category}</h1><p aria-live="polite">{incident.state}</p><h2>Incident record</h2><dl><div><dt>Impact</dt><dd>{incident.category}</dd></div><div><dt>Policy, execution, verification</dt><dd>Recorded in timeline</dd></div><div><dt>Rollback and notifications</dt><dd>Visible when available</dd></div></dl><h2>Timeline</h2><ol>{incident.timeline.map((event, index) => <li key={index}>{event.state}</li>)}</ol><SignozLinks links={incident.signoz} /></main>;
+  if (error) return <main className="page"><div className="notice error">{error}</div></main>; if (!incident) return <main className="page"><div className="empty-state">Loading incident record...</div></main>;
+  return <main className="page"><Link className="back-link" to="/ops/incidents">Back to incidents</Link><div className="page-heading"><div><span className="section-label">Incident detail</span><h1>{incident.category.replaceAll("_", " ")}</h1><p className="mono">{incident.incident_id}</p></div><span className="state-pill large">{incident.state}</span></div><section className="detail-layout"><div className="panel"><div className="panel-heading"><div><h2>Incident timeline</h2><p>Append-only lifecycle history.</p></div></div>{incident.timeline.length === 0 ? <div className="empty-state">No lifecycle events have been recorded yet.</div> : <ol className="timeline">{incident.timeline.map((event, index) => <li key={`${event.state}-${index}`}><span /> <div><b>{event.state}</b><small>{new Date(event.at).toLocaleString()}</small></div></li>)}</ol>}</div><aside><section className="panel detail-card"><h2>Incident summary</h2><dl><div><dt>Category</dt><dd>{incident.category.replaceAll("_", " ")}</dd></div><div><dt>Current state</dt><dd>{incident.state}</dd></div><div><dt>Created</dt><dd>{incident.created_at ? new Date(incident.created_at).toLocaleString() : "Not recorded"}</dd></div></dl></section><SignozLinks links={incident.signoz} /></aside></section></main>;
 }
