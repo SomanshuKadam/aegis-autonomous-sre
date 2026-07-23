@@ -5,3 +5,9 @@ opentelemetry-distro==0.57b0
 opentelemetry-exporter-otlp-proto-http==1.36.0
 opentelemetry-instrumentation-fastapi==0.57b0
 opentelemetry-instrumentation-pymongo==0.57b0
+opentelemetry-sdk==1.36.0
+pydantic-settings==2.10.1
+httpx==0.28.1
+jsonschema==4.25.0
+pytest==8.4.1
+pytest-asyncio==1.1.0
