@@ -1,0 +1,1 @@
+{"version":1,"fixture_id":"invalid-agent-output","category":"catalog_search","refusal_reason":"structured agent output is invalid","expected_outcome":"BLOCKED"}

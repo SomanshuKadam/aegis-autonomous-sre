@@ -10,6 +10,9 @@ class EvaluationFixture(BaseModel):
     evidence_types: list[str] = []
     action_key: str | None = None
     risk_score: int = 0
+    refusal_reason: str | None = None
+    expected_outcome: str = "BLOCKED"
+    mutation_allowed: bool = False
 
 def load_fixture(path: Path) -> EvaluationFixture:
     payload = json.loads(path.read_text(encoding="utf-8"))

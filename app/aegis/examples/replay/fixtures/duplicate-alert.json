@@ -1,0 +1,1 @@
+{"version":1,"fixture_id":"duplicate-alert","category":"catalog_search","refusal_reason":"duplicate alert replay is a no-op","expected_outcome":"BLOCKED"}

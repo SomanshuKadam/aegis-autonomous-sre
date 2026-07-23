@@ -1,0 +1,1 @@
+{"version":1,"fixture_id":"prompt-injection","category":"catalog_search","refusal_reason":"telemetry contains untrusted instruction content","expected_outcome":"BLOCKED"}

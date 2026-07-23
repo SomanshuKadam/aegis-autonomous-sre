@@ -1,0 +1,1 @@
+{"version":1,"fixture_id":"action-failure","category":"inventory_dependency","refusal_reason":"simulated action failure stops further mutation","expected_outcome":"BLOCKED"}

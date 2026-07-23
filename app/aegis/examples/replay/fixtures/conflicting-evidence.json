@@ -1,0 +1,1 @@
+{"version":1,"fixture_id":"conflicting-evidence","category":"inventory_dependency","refusal_reason":"evidence conflicts across sources","expected_outcome":"BLOCKED"}

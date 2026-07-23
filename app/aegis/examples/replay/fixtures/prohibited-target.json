@@ -1,0 +1,1 @@
+{"version":1,"fixture_id":"prohibited-target","category":"order_backlog","refusal_reason":"target is outside the registered action scope","expected_outcome":"BLOCKED"}

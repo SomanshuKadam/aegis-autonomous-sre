@@ -1,0 +1,1 @@
+{"version":1,"fixture_id":"verification-failure","category":"order_backlog","refusal_reason":"simulated verification failure requires rollback or escalation","expected_outcome":"BLOCKED"}
