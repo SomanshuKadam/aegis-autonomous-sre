@@ -4,9 +4,11 @@ import httpx
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Header, HTTPException
 from aegis.config import get_settings
+from aegis.domain.commerce_store import CommerceStore
 
 state = {"processed": 0, "failures": 0, "running": True}
 capacity = {"desired": 1, "previous": 1, "maximum": 4}
+commerce = CommerceStore()
 
 async def consume() -> None:
     url = os.getenv("AEGIS_API_URL", "http://api:8081")
@@ -31,7 +33,8 @@ app = FastAPI(title="Aegis Order Worker", lifespan=lifespan)
 
 @app.get("/health")
 def health() -> dict[str, object]:
-    return {"status": "ok", "service": "aegis-worker", **state, "queue_depth": 0, "oldest_age_seconds": 0, "capacity": capacity["desired"], "maximum": capacity["maximum"], "resource_headroom": capacity["desired"] < capacity["maximum"]}
+    queue = commerce.queue_health()
+    return {"status": "ok", "service": "aegis-worker", **state, **queue, "capacity": capacity["desired"], "maximum": capacity["maximum"], "resource_headroom": capacity["desired"] < capacity["maximum"]}
 
 @app.post("/control/capacity")
 def set_capacity(desired: int, authorization: str | None = Header(default=None)) -> dict[str, object]:

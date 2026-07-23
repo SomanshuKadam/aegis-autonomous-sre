@@ -4,12 +4,10 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from aegis.domain.catalog import browse, product
-from aegis.domain.inventory import InventoryService
-from aegis.domain.orders import OrderService
-from aegis.domain.queue import OrderQueue
+from aegis.domain.commerce_store import CommerceStore
 
 router = APIRouter(prefix="/api/v1", tags=["commerce"])
-inventory = InventoryService(); orders = OrderService(inventory, OrderQueue())
+orders = CommerceStore()
 
 class OrderInput(BaseModel):
     sku: str
@@ -32,15 +30,17 @@ def get_product(sku: str) -> dict[str, object]:
 @router.post("/orders", status_code=201)
 def create_order(payload: OrderInput, idempotency_key: str = Header(alias="Idempotency-Key")) -> dict[str, object]:
     if not idempotency_key: raise HTTPException(status_code=400, detail="Idempotency-Key is required")
-    return orders.create(payload.sku, payload.quantity, idempotency_key)
+    item = product(payload.sku)
+    if item is None: raise HTTPException(status_code=404, detail="product does not exist")
+    return orders.create_order({"sku": payload.sku, "quantity": payload.quantity, "total_minor": item.price_minor * payload.quantity, "currency": item.currency}, idempotency_key)
 
 @router.get("/orders/{order_id}")
 def get_order(order_id: str) -> dict[str, object]:
-    return orders.get(order_id)
+    return orders.get_order(order_id)
 
 @router.post("/reservations", status_code=201)
 def create_reservation(payload: ReservationInput) -> dict[str, object]:
-    return inventory.reserve(payload.sku, payload.quantity, payload.order_id)
+    raise HTTPException(status_code=410, detail="inventory reservations are handled by the inventory service")
 
 @router.post("/orders/process-next")
 def process_next() -> dict[str, object]:
