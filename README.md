@@ -1,249 +1,68 @@
-# Aegis: Autonomous SRE Pipeline
+# Aegis reliability platform
 
-Aegis is a complete local closed-loop remediation environment for WSL 2. Its React/TypeScript
-operations console calls a FastAPI backend through an nginx `/api` proxy. A slow request produces
-an OpenTelemetry trace in self-hosted SigNoz. SigNoz sends the concrete trace ID to n8n, Codex
-diagnoses the MongoDB collection scan through SigNoz MCP, n8n announces and runs the bounded index
-remediation, verifies latency, and posts each phase to Slack.
+Aegis is a local commerce application with a bounded reliability control plane. Its operations
+console shows application health and the durable incident lifecycle; SigNoz remains the
+authoritative telemetry explorer and n8n handles alert delivery, approval resume, and notification
+recording.
 
-## Architecture
+This is a hackathon prototype. It has no automated-test workflow. Validation is intentionally
+limited to production builds, Compose service health, and the manual demonstrations below.
 
-```text
-browser -> React/nginx -> FastAPI -> MongoDB
-          |
-          +-- OTLP/HTTP -> SigNoz -> webhook -> n8n
-                                      |          |
-                                      |          +-> Slack: Trigger
-                                      |          +-> Codex + SigNoz MCP: Analysis
-                                      |          +-> Slack: Analysis
-                                      |          +-> Slack: Remediation
-                                      |          +-> Codex: create MongoDB index
-                                      |          +-> FastAPI verification
-                                      |          +-> Slack: Resolution
-                                      |
-                                      +-> trace ID grouped into alert labels
-```
+## Use the UI
 
-The `n8n` container mounts `/var/run/docker.sock` because the local remediation agent must execute
-`docker exec` against MongoDB. Docker socket access is host-root-equivalent. This is suitable for
-this isolated local lab; do not expose this n8n instance to untrusted users or the public internet.
+With the stack already running, open `http://localhost:3000/shop` to browse products and submit a
+normal order. Open `http://localhost:3000/ops` to view live service health, workload activity,
+and historical incidents. Open an incident to inspect its evidence, policy decision, approval,
+execution, verification or rollback, notification status, and authenticated SigNoz context links.
 
-## Files
+The operations console contains no customer-facing control for manufacturing faults or applying a
+repair. The three bounded demonstrations are reviewer-operated backend walkthroughs.
 
-- `docker-compose.yml`: MongoDB, instrumented FastAPI, and persistent n8n.
-- `frontend/`: Vite-built React/TypeScript console served by nginx on port `3000`.
-- `signoz/casting.yaml`: Foundry Compose deployment definition for SigNoz.
-- `signoz-mcp` Compose service: local MCP bridge on port `8000` for an existing SigNoz instance.
-- `codex/config.toml`: host-side `~/.codex/config.toml` using `localhost:8000/mcp`.
-- `codex/config.container.toml`: equivalent config used from inside n8n.
-- `n8n/workflows/aegis-autonomous-sre.json`: workflow with four Block Kit messages.
-- `scripts/aegis-agent.sh`: validated two-stage Codex analysis/remediation runner.
-- `scripts/test-e2e.sh`: deterministic slow trace and direct webhook smoke test.
+## Run a manual demonstration
 
-## Prerequisites
-
-Run all commands in Ubuntu under WSL 2 with a native Docker Engine. Allocate at least 6 GB RAM;
-SigNoz alone needs at least 4 GB. Install `curl`, `jq`, Docker Engine with Compose v2, and Codex CLI.
+Run these only against the local Compose stack. Each command prints an incident and, where
+available, a trace correlation ID to use in the operations console and SigNoz.
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y ca-certificates curl jq
-docker version
-docker compose version
-codex --version
+docker compose cp scripts/demo/catalog-auto-recovery-demo.py api:/tmp/catalog-auto-recovery-demo.py
+docker compose exec -T api python /tmp/catalog-auto-recovery-demo.py
+
+docker compose cp scripts/demo/inventory-approval-demo.py api:/tmp/inventory-approval-demo.py
+docker compose exec -T api python /tmp/inventory-approval-demo.py
+
+docker compose cp scripts/demo/backlog-recovery-demo.py api:/tmp/backlog-recovery-demo.py
+docker compose exec -T api python /tmp/backlog-recovery-demo.py
+
+docker compose cp scripts/demo/backlog-safe-refusal-demo.py api:/tmp/backlog-safe-refusal-demo.py
+docker compose exec -T api python /tmp/backlog-safe-refusal-demo.py
 ```
 
-Authenticate Codex once on the host:
+Catalog recovery grows local demo data, observes a real slow customer search after removing only
+the registered index, then verifies the lifecycle recreates exactly `products.search_text_1`.
+Inventory recovery creates ordinary order pressure, pauses for the exact approval, verifies a
+fresh order, and restores the pre-demo capacity. Backlog recovery adds one bounded worker capacity
+step only when healthy headroom exists; the refusal walkthrough proves an already-maxed worker
+pool is escalated without mutation.
+
+For an n8n approval resume and notification-recording walkthrough, run:
 
 ```bash
-codex login
+docker compose cp scripts/demo/n8n-approval-resume-demo.py api:/tmp/n8n-approval-resume-demo.py
+docker compose exec -T api python /tmp/n8n-approval-resume-demo.py
 ```
 
-The n8n container can use `CODEX_API_KEY` for unattended runs or mount an existing Codex CLI login
-from `CODEX_AUTH_FILE`. The supplied WSL setup uses the existing Windows Codex login at
-`/mnt/c/Users/Admin/.codex/auth.json` without copying its contents.
+If Slack is not configured, the workflow records a failed Slack notification independently while
+the incident’s technical result remains visible in Aegis.
 
-## 1. Configure external secrets
-
-Secrets cannot be validly generated by this repository: the SigNoz service-account key is issued
-by the local SigNoz instance, the Codex key is issued by OpenAI, and the incoming webhook URL is
-issued by your Slack workspace. They remain environment variables and are excluded from Git.
+## Production build and workflow import
 
 ```bash
-cp .env.example .env
-chmod 600 .env
+npm --prefix frontend run build
+docker compose config --quiet
+docker compose exec -T n8n n8n import:workflow --input=/opt/aegis/workflows/aegis-autonomous-sre.json
+docker compose exec -T n8n n8n publish:workflow --id=aegis-autonomous-lifecycle-v2
 ```
 
-Create a Slack app at `api.slack.com/apps`, enable Incoming Webhooks, and add one for the
-`#sre-alerts` channel. Put the resulting URL in `SLACK_WEBHOOK_URL` in `.env`. Put a valid OpenAI
-API key in `CODEX_API_KEY`, or set `CODEX_AUTH_FILE` to an existing `auth.json`. The
-`SIGNOZ_API_KEY` is added after SigNoz starts in step 2.
-
-Change the local MongoDB, n8n, and encryption secrets in `.env` before using the lab on a shared
-machine. Do not commit `.env`.
-
-## 2. Install SigNoz and its MCP server
-
-```bash
-curl -fsSL https://signoz.io/foundry.sh | bash
-export PATH="$HOME/.local/bin:$PATH"
-foundryctl cast -f signoz/casting.yaml
-```
-
-Open `http://localhost:8080`, finish the local owner setup, then go to **Settings → Service
-Accounts**, create an Aegis service account, assign the managed `signoz-viewer` role, and create a
-key. Copy that key into `SIGNOZ_API_KEY` in `.env`. A key on a service account without a role can
-authenticate but receives `403 authz_forbidden` when MCP queries telemetry.
-
-Install the host Codex MCP configuration and export the key in the shell that launches Codex:
-
-```bash
-mkdir -p "$HOME/.codex"
-cp codex/config.toml "$HOME/.codex/config.toml"
-set -a
-. ./.env
-set +a
-codex mcp list
-```
-
-The config forwards `SIGNOZ_API_KEY` as the `SIGNOZ-API-KEY` request header. The container variant
-points to `host.docker.internal` because `localhost` inside n8n is the n8n container itself.
-
-## 3. Start MongoDB, FastAPI, and n8n
-
-```bash
-docker compose --env-file .env build
-docker compose --env-file .env up -d
-docker compose ps
-curl -fsS http://localhost:8081/health | jq .
-curl -fsS http://localhost:3000/healthz
-curl -fsS http://localhost:8000/livez
-```
-
-Open the Aegis UI at `http://localhost:3000`. Browser API calls use same-origin paths under
-`/api`; nginx forwards them to `api:8081` on the private `aegis` network, so no browser CORS or
-host-only backend address is required.
-
-The services share the `aegis` network. SigNoz is independently generated by Foundry, so connect
-n8n to the first network used by the running SigNoz service:
-
-```bash
-docker network connect signoz-network aegis-n8n 2>/dev/null || true
-docker exec signoz-signoz-0 wget -qO- http://aegis-n8n:5678/healthz
-```
-
-FastAPI sends OTLP/HTTP to the Foundry collector on host port `4318`. The Aegis MCP sidecar reaches
-the existing SigNoz API through `host.docker.internal:8080`, and Codex reaches the sidecar as
-`signoz-mcp:8000`. No generated Foundry Compose file is edited, so re-running Foundry is safe.
-
-## 4. Import and activate the n8n workflow
-
-Open `http://localhost:5678` and create the local n8n owner on first launch. Then import from the
-terminal:
-
-```bash
-bash scripts/import-workflow.sh
-```
-
-In n8n, open **Aegis - Autonomous SRE Pipeline**, inspect it, and switch it **Active**. The
-production endpoint is `http://localhost:5678/webhook/signoz-alert`.
-
-The workflow uses Slack incoming webhooks directly, so it needs no stored n8n credential. Slack
-binds that webhook to `#sre-alerts`, and all four messages use Block Kit.
-
-## 5. Configure the SigNoz P95 trace alert
-
-In SigNoz, create a Webhook notification channel named `Aegis n8n` with this URL:
-
-```text
-http://aegis-n8n:5678/webhook/signoz-alert
-```
-
-Create a trace-based alert named `Aegis API P95 latency > 2s`:
-
-1. Filter traces with `service.name = 'aegis-api'` and span name `mongodb.search`.
-2. Aggregate `duration_nano` using `P95` and set the threshold above `2000000000` nanoseconds.
-3. Use a one-minute evaluation window for the local test.
-4. Group by `trace_id`. Aggregate latency alone does not identify a trace.
-5. Add `trace_id` to the alert labels or annotations using the grouped trace ID.
-6. Route the alert to `Aegis n8n` and keep resolved notifications enabled.
-
-Test the notification channel in SigNoz. A channel test lacks a real trace ID and is expected to
-be rejected by Aegis; that confirms input validation. A real slow trace supplies the ID.
-
-## 6. Deterministic end-to-end smoke test
-
-This test drops `searchField_1`, generates one 2.5-second traced request, waits for ingestion, and
-posts a faithful alert payload directly to the active production webhook:
-
-```bash
-bash scripts/test-e2e.sh
-docker compose logs -f n8n
-```
-
-You can also click **Generate latency scenario** at `http://localhost:3000` to create a traced
-request and inspect its latency and trace ID. The terminal smoke test additionally submits the
-alert payload, making it the deterministic full-pipeline test.
-
-Expected results:
-
-1. Slack receives **Trigger**.
-2. Codex reads the trace through SigNoz MCP and Slack receives **Analysis**.
-3. Slack receives **Remediation** before mutation.
-4. Codex non-interactively runs:
-
-   ```bash
-   docker compose exec -T mongodb sh /opt/aegis/mongodb-index.sh create
-   ```
-
-5. FastAPI verifies the next request is below two seconds and Slack receives **Resolution**.
-
-Verify state directly:
-
-```bash
-docker compose exec -T mongodb sh /opt/aegis/mongodb-index.sh list
-curl -fsS 'http://localhost:8081/search?q=needle' | jq .
-```
-
-The output must include `searchField_1`, `"index_present": true`, and latency below 2000 ms.
-
-## 7. Verify the real SigNoz alert path
-
-Drop the index, then generate slow traffic for longer than the configured evaluation window. Do
-not call the n8n webhook manually in this test:
-
-```bash
-docker compose exec -T mongodb sh /opt/aegis/mongodb-index.sh drop
-
-end=$((SECONDS + 90))
-while (( SECONDS < end )); do
-  curl -fsS 'http://localhost:8081/search?q=needle' | jq -c \
-    '{trace_id,latency_ms,index_present}'
-done
-```
-
-Watch SigNoz **Alerts → Triggered Alerts**, n8n **Executions**, and `#sre-alerts`. The alert must
-carry one grouped `trace_id`; n8n rejects malformed or absent IDs. After resolution, verify the
-index and latency with the commands in step 6.
-
-## Operations
-
-```bash
-# Stop without deleting data.
-docker compose down
-
-# Start again.
-docker compose --env-file .env up -d
-
-# Inspect failures.
-docker compose logs --tail=200 api n8n mongodb
-docker compose exec -T n8n codex mcp list
-curl -fsS http://localhost:8000/livez
-```
-
-An explicit data reset is destructive and never part of automated remediation:
-
-```bash
-docker compose down
-docker volume rm aegis_mongodb-data aegis_n8n-data
-```
+Never commit `.env`, authentication material, webhook URLs, or generated SigNoz resources. The
+only runtime component with mutation capability is the restricted action runner, and every action
+is registered, target-validated, idempotent, policy-gated, and verified.
