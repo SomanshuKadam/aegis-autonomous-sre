@@ -19,7 +19,14 @@ app = FastAPI(title="Aegis Target API", version="1.0.0")
 
 
 def _has_search_index() -> bool:
-    return any(SEARCH_FIELD in info.get("key", {}) for info in collection.index_information().values())
+    for info in collection.index_information().values():
+        keys = info.get("key", [])
+        if isinstance(keys, dict):
+            if SEARCH_FIELD in keys:
+                return True
+        elif any(field == SEARCH_FIELD for field, _direction in keys):
+            return True
+    return False
 
 
 @app.get("/health")
