@@ -24,6 +24,9 @@ def create_app() -> FastAPI:
     @app.exception_handler(ValueError)
     async def invalid_value(_: Request, exc: ValueError) -> JSONResponse:
         return JSONResponse(status_code=422, content={"code":"INVALID_INPUT","message":str(exc),"correlation_id":""})
+    @app.exception_handler(KeyError)
+    async def missing_resource(_: Request, exc: KeyError) -> JSONResponse:
+        return JSONResponse(status_code=404, content={"code":"NOT_FOUND","message":str(exc),"correlation_id":""})
     @app.get("/api/v1/health")
     @app.get("/health")
     def health() -> dict[str, object]: return {"status":"ok", "service":"aegis-api", "settings":get_settings().safe_summary()}
