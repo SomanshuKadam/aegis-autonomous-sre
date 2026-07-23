@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { BrowserRouter, Link, Route, Routes } from "react-router-dom";
 import { ShopPage } from "./customer/ShopPage";
 import { OverviewPage } from "./operations/OverviewPage";
+import { IncidentListPage } from "./operations/IncidentListPage";
+import { IncidentDetailPage } from "./operations/IncidentDetailPage";
 
 type Readiness = {
   database: string;
@@ -131,5 +133,5 @@ function LegacyScenario() {
 }
 
 export default function App() {
-  return <BrowserRouter><nav><Link to="/shop">Shop</Link> | <Link to="/ops">Operations</Link></nav><Routes><Route path="/shop" element={<ShopPage />} /><Route path="/ops" element={<OverviewPage />} /><Route path="*" element={<LegacyScenario />} /></Routes></BrowserRouter>;
+  return <BrowserRouter><nav><Link to="/shop">Shop</Link> | <Link to="/ops">Operations</Link></nav><Routes><Route path="/shop" element={<ShopPage />} /><Route path="/ops" element={<OverviewPage />} /><Route path="/ops/incidents" element={<IncidentListPage />} /><Route path="/ops/incidents/:incidentId" element={<IncidentDetailPage />} /><Route path="*" element={<LegacyScenario />} /></Routes></BrowserRouter>;
 }
