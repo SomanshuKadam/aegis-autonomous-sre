@@ -1,11 +1,11 @@
 from fastapi import FastAPI, Header, HTTPException
 from time import perf_counter
 from pydantic import BaseModel, Field
-from aegis.domain.inventory import InventoryService
 from aegis.config import get_settings
+from aegis.inventory.store import InventoryStore
 
 app = FastAPI(title="Aegis Inventory")
-inventory = InventoryService()
+inventory = InventoryStore()
 capacity = {"desired": 1, "previous": 1, "healthy": True}
 
 class ReservationRequest(BaseModel):
@@ -23,6 +23,10 @@ def reserve(payload: ReservationRequest, traceparent: str | None = Header(defaul
     started = perf_counter()
     reservation = inventory.reserve(payload.sku, payload.quantity, payload.order_id)
     return {**reservation, "trace_context_received": bool(traceparent), "latency_ms": round((perf_counter() - started) * 1000, 3), "capacity": capacity["desired"]}
+
+@app.post("/reservations/{reservation_id}/commit")
+def commit(reservation_id: str) -> dict[str, object]:
+    return inventory.commit(reservation_id)
 
 @app.post("/control/capacity")
 def set_capacity(desired: int, authorization: str | None = Header(default=None)) -> dict[str, object]:

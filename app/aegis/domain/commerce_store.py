@@ -25,11 +25,15 @@ class CommerceStore:
         existing = self.orders.find_one({"idempotency_key": idempotency_key})
         if existing:
             return self._document(existing)
-        order_id = new_id()
+        order_id = str(order.get("order_id") or new_id())
         document = {**order, "order_id": order_id, "idempotency_key": idempotency_key, "state": "QUEUED", "created_at": utc_now(), "updated_at": utc_now()}
         self.orders.insert_one(document)
         self.jobs.insert_one({"job_id": new_id(), "order_id": order_id, "state": "PENDING", "attempts": 0, "available_at": utc_now(), "created_at": utc_now()})
         return self._document(document)
+
+    def get_order_by_idempotency(self, idempotency_key: str) -> dict[str, object] | None:
+        result = self.orders.find_one({"idempotency_key": idempotency_key})
+        return self._document(result) if result else None
 
     def get_order(self, order_id: str) -> dict[str, object]:
         result = self.orders.find_one({"order_id": order_id})

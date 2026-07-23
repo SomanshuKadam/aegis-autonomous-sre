@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Header, HTTPException
+import httpx
 from pydantic import BaseModel, Field
 
 from aegis.domain.catalog import browse, product
 from aegis.domain.commerce_store import CommerceStore
+from aegis.config import get_settings
+from aegis.types import new_id
 
 router = APIRouter(prefix="/api/v1", tags=["commerce"])
 orders = CommerceStore()
+settings = get_settings()
 
 class OrderInput(BaseModel):
     sku: str
@@ -32,7 +36,12 @@ def create_order(payload: OrderInput, idempotency_key: str = Header(alias="Idemp
     if not idempotency_key: raise HTTPException(status_code=400, detail="Idempotency-Key is required")
     item = product(payload.sku)
     if item is None: raise HTTPException(status_code=404, detail="product does not exist")
-    return orders.create_order({"sku": payload.sku, "quantity": payload.quantity, "total_minor": item.price_minor * payload.quantity, "currency": item.currency}, idempotency_key)
+    existing = orders.get_order_by_idempotency(idempotency_key)
+    if existing: return existing
+    order_id = new_id()
+    reservation = httpx.post(f"{settings.inventory_url.rstrip('/')}/reservations", json={"sku": payload.sku, "quantity": payload.quantity, "order_id": order_id}, timeout=10)
+    if reservation.status_code >= 400: raise HTTPException(status_code=409, detail="inventory reservation failed")
+    return orders.create_order({"order_id": order_id, "sku": payload.sku, "quantity": payload.quantity, "total_minor": item.price_minor * payload.quantity, "currency": item.currency, "reservation_id": reservation.json()["reservation_id"]}, idempotency_key)
 
 @router.get("/orders/{order_id}")
 def get_order(order_id: str) -> dict[str, object]:
@@ -45,4 +54,8 @@ def create_reservation(payload: ReservationInput) -> dict[str, object]:
 @router.post("/orders/process-next")
 def process_next() -> dict[str, object]:
     completed = orders.complete_next()
+    if completed and completed.get("reservation_id"):
+        response = httpx.post(f"{settings.inventory_url.rstrip('/')}/reservations/{completed['reservation_id']}/commit", timeout=10)
+        if response.status_code >= 400:
+            raise HTTPException(status_code=502, detail="inventory commit failed")
     return {"order": completed, "processed": completed is not None}
