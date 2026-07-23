@@ -129,7 +129,9 @@ services:
         condition: service_healthy
       frontend:
         condition: service_healthy
-    networks: [aegis]
+    networks:
+      - aegis
+      - signoz-network
 
 volumes:
   mongodb-data:
@@ -139,3 +141,6 @@ networks:
   aegis:
     name: aegis
     driver: bridge
+  signoz-network:
+    external: true
+    name: signoz-network
