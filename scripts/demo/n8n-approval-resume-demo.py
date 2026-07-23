@@ -31,7 +31,10 @@ def main() -> None:
         resumed.raise_for_status()
         time.sleep(7)
         final = client.get(f"{API}/api/v1/orchestration/incidents/{incident_id}").json()
-    if final["state"] != "RESOLVED" or not final["notifications"]: raise RuntimeError("n8n approval branch did not resolve and record notification")
+    if final["state"] != "RESOLVED" or not final["notifications"]:
+        raise RuntimeError("n8n approval branch did not resolve and record notification")
+    if os.getenv("AEGIS_EXPECT_SLACK_FAILURE") == "true" and not any(item.get("channel") == "slack" and item.get("state") == "FAILED" for item in final["notifications"]):
+        raise RuntimeError("n8n did not independently record the expected Slack delivery failure")
     print(f"n8n-approval-resume-manual-ok incident={incident_id}")
 
 
