@@ -40,6 +40,7 @@ def create_router(store: object) -> APIRouter:
         try: incident = store.get(incident_id)
         except KeyError: raise HTTPException(status_code=404, detail="incident not found")
         trace_id = request.query_params.get("trace_id") or str(incident.get("trace_id") or "")
-        incident["signoz"] = context_links(trace_id, "aegis-api") if trace_id else {"trace": {"url": None, "reason": "trace correlation unavailable"}}
+        service = {"catalog_search": "aegis-api", "inventory_dependency": "aegis-inventory", "order_backlog": "aegis-worker"}.get(str(incident.get("category")), "aegis-api")
+        incident["signoz"] = context_links(trace_id, service, settings.signoz_url.rstrip("/")) if trace_id else {"trace": {"url": None, "reason": "trace correlation unavailable"}, "logs": {"url": None, "reason": "trace correlation unavailable"}, "service": {"url": None, "reason": "trace correlation unavailable"}, "dashboard": {"url": None, "reason": "trace correlation unavailable"}}
         return {**incident, **store.records(incident_id)}
     return router

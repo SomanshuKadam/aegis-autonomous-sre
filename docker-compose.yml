@@ -58,6 +58,7 @@ services:
       AEGIS_RUNNER_TOKEN: ${AEGIS_RUNNER_TOKEN:?AEGIS_RUNNER_TOKEN must be set}
       AEGIS_RUNNER_URL: http://action-runner:8085
       AEGIS_DEMO_WORKLOAD_ENABLED: ${AEGIS_DEMO_WORKLOAD_ENABLED:-false}
+      AEGIS_SIGNOZ_URL: ${AEGIS_SIGNOZ_URL:-http://localhost:3301}
     ports:
       - "8081:8081"
     extra_hosts:

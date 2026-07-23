@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     api_url: str = Field("http://api:8081", alias="AEGIS_API_URL")
     inventory_url: str = Field("http://inventory:8082", alias="AEGIS_INVENTORY_URL")
     worker_url: str = Field("http://worker:8083", alias="AEGIS_WORKER_URL")
+    signoz_url: str = Field("http://localhost:3301", alias="AEGIS_SIGNOZ_URL")
     normal_workload_enabled: bool = Field(True, alias="AEGIS_NORMAL_WORKLOAD_ENABLED")
     demo_workload_enabled: bool = Field(False, alias="AEGIS_DEMO_WORKLOAD_ENABLED")
     search_recovery_ms: int = Field(2000, ge=1, alias="AEGIS_SEARCH_RECOVERY_MS")
