@@ -81,6 +81,7 @@ services:
       MONGO_DATABASE: ${MONGO_DATABASE:-mydatabase}
       OTEL_SERVICE_NAME: aegis-inventory
       AEGIS_MUTATION_CAPABILITY: none
+      AEGIS_RUNNER_TOKEN: ${AEGIS_RUNNER_TOKEN:?AEGIS_RUNNER_TOKEN must be set}
     depends_on:
       mongodb:
         condition: service_healthy
@@ -106,6 +107,7 @@ services:
       OTEL_SERVICE_NAME: aegis-worker
       AEGIS_API_URL: http://api:8081
       AEGIS_MUTATION_CAPABILITY: none
+      AEGIS_RUNNER_TOKEN: ${AEGIS_RUNNER_TOKEN:?AEGIS_RUNNER_TOKEN must be set}
     depends_on:
       mongodb:
         condition: service_healthy

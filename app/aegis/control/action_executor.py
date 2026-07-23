@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pymongo import ASCENDING
+import httpx
 
 from aegis.config import Settings, get_settings
 from aegis.control.action_registry import validate_proposal
@@ -18,7 +19,18 @@ class ActionExecutor:
         action = validate_proposal(str(proposal["action_key"]), dict(proposal.get("target", {})), dict(proposal.get("parameters", {})))
         if action.action_id == "mongo.create_search_index":
             return self._create_catalog_index(dict(proposal["target"]))
+        if action.action_id == "inventory.restore_capacity":
+            return self._set_service_capacity(self.settings.inventory_url, dict(proposal["target"]), int(dict(proposal["parameters"])["desired"]), "inventory_dependency")
+        if action.action_id == "worker.set_capacity":
+            return self._set_service_capacity(self.settings.worker_url, dict(proposal["target"]), int(dict(proposal["parameters"])["desired"]), "order_worker")
         raise ValueError(f"registered action handler is unavailable for {action.action_id}")
+
+    def _set_service_capacity(self, base_url: str, target: dict[str, object], desired: int, expected_type: str) -> dict[str, object]:
+        if target.get("type") != expected_type:
+            raise ValueError("action target does not match the registered service")
+        response = httpx.post(f"{base_url.rstrip('/')}/control/capacity", params={"desired": desired}, headers={"Authorization": f"Bearer {self.settings.runner_token.get_secret_value()}"}, timeout=60)
+        response.raise_for_status()
+        return {"action": "service.set_capacity", "target": target, **response.json()}
 
     def _create_catalog_index(self, target: dict[str, object]) -> dict[str, object]:
         expected = {"type": "mongodb_collection", "database": self.settings.mongo_database, "collection": "products", "field": "search_text"}
