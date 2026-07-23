@@ -7,8 +7,6 @@
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "test": "vitest run",
-    "test:watch": "vitest",
     "test:e2e": "playwright test"
   },
   "dependencies": {
@@ -22,11 +20,6 @@
   "devDependencies": {
     "@types/react": "19.0.8",
     "@types/react-dom": "19.0.3",
-    "@playwright/test": "1.54.1",
-    "@testing-library/jest-dom": "6.6.3",
-    "@testing-library/react": "16.3.0",
-    "@testing-library/user-event": "14.6.1",
-    "jsdom": "26.1.0",
-    "vitest": "3.2.4"
+    "@playwright/test": "1.54.1"
   }
 }
