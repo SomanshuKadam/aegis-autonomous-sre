@@ -5,13 +5,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from aegis.workload.service import WorkloadService
 
-service = WorkloadService(os.getenv("AEGIS_WORKLOAD_STATE_PATH", "/tmp/aegis-workload-runs.json"))
+service = WorkloadService()
 state = {"run_id": None, "failures": 0, "running": True}
 
 async def generate() -> None:
     if not os.getenv("AEGIS_NORMAL_WORKLOAD_ENABLED", "true").lower() == "true":
         return
-    run = service.start(seed=int(os.getenv("AEGIS_WORKLOAD_SEED", "1")))
+    run = service.start(seed=int(os.getenv("AEGIS_WORKLOAD_SEED", "1")), run_id=os.getenv("AEGIS_WORKLOAD_RUN_ID", "normal-local"))
     state["run_id"] = run.run_id
     url = os.getenv("AEGIS_API_URL", "http://api:8081")
     async with httpx.AsyncClient(timeout=5) as client:
@@ -35,4 +35,5 @@ app = FastAPI(title="Aegis Workload", lifespan=lifespan)
 
 @app.get("/health")
 def health() -> dict[str, object]:
-    return {"status": "ok", "service": "aegis-workload", **state}
+    run = service.get(str(state["run_id"])) if state["run_id"] else None
+    return {"status": "ok", "service": "aegis-workload", **state, "profile": run.profile_id if run else None, "generated_orders": run.generated_orders if run else 0, "condition_markers": run.condition_markers if run else {}}
