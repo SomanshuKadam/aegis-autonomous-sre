@@ -35,8 +35,8 @@
       "id": "approval-webhook", "name": "Approval Resume Webhook", "type": "n8n-nodes-base.webhook", "typeVersion": 2, "position": [-20, 220], "webhookId": "aegis-approval-resume"
     },
     {
-      "parameters": {"method": "POST", "url": "={{ $env.AEGIS_API_URL + '/api/v1/orchestration/notifications' }}", "sendHeaders": true, "headerParameters": {"parameters": [{"name": "Authorization", "value": "={{ 'Bearer ' + $env.AEGIS_ORCHESTRATOR_TOKEN }}"}]}, "sendBody": true, "specifyBody": "json", "jsonBody": "={{ {incident_id: $json.body.incident_id, channel:'approval-resume', delivered:true, detail:'n8n received an approval resume request'} }}", "options": {"retry": {"maxTries": 3}}},
-      "id": "record-approval-resume", "name": "Record Approval Resume", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [250, 220]
+      "parameters": {"method": "POST", "url": "={{ $env.AEGIS_API_URL + '/api/v1/orchestration/incidents/' + $json.body.incident_id + '/approve' }}", "sendHeaders": true, "headerParameters": {"parameters": [{"name": "Authorization", "value": "={{ 'Bearer ' + $env.AEGIS_OPERATOR_TOKEN }}"}]}, "sendBody": true, "specifyBody": "json", "jsonBody": "={{ {approval_id:$json.body.approval_id, approver:$json.body.approver ?? 'n8n-approval', decision:$json.body.decision ?? 'APPROVED'} }}", "options": {"retry": {"maxTries": 3}}},
+      "id": "resume-approved-incident", "name": "Resume Approved Incident", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [250, 220]
     }
   ],
   "connections": {
@@ -46,7 +46,7 @@
     "Process Incident Lifecycle": {"main": [[{"node": "Deliver Slack Lifecycle Update", "type": "main", "index": 0}]]},
     "Deliver Slack Lifecycle Update": {"main": [[{"node": "Classify Notification Outcome", "type": "main", "index": 0}]]},
     "Classify Notification Outcome": {"main": [[{"node": "Record Independent Notification Outcome", "type": "main", "index": 0}]]},
-    "Approval Resume Webhook": {"main": [[{"node": "Record Approval Resume", "type": "main", "index": 0}]]}
+    "Approval Resume Webhook": {"main": [[{"node": "Resume Approved Incident", "type": "main", "index": 0}]]}
   },
   "active": true,
   "settings": {"executionOrder": "v1"},
