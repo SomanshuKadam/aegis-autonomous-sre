@@ -8,6 +8,7 @@ from fastapi.encoders import jsonable_encoder
 from pymongo import MongoClient
 
 from aegis.control.action_registry import resolve
+from aegis.control.approvals import ApprovalStore
 from aegis.control.agents import collect, evaluate_hypotheses, plan, triage
 from aegis.control.budgets import InvestigationBudget
 from aegis.control.evidence import ReadOnlyEvidence
@@ -37,6 +38,7 @@ class IncidentOrchestrator:
         self.settings = settings or get_settings()
         self.evidence = ReadOnlyEvidence()
         self.db = MongoClient(self.settings.mongodb_uri.get_secret_value(), serverSelectionTimeoutMS=5000)[self.settings.mongo_database]
+        self.approvals = ApprovalStore(incidents)
 
     def process(self, incident_id: str) -> OrchestrationResult:
         incident = self.incidents.get(incident_id)
@@ -78,9 +80,24 @@ class IncidentOrchestrator:
             return self._dispatch_and_verify(incident_id, proposal)
         if decision["outcome"] == "APPROVAL_REQUIRED":
             next_incident = self._advance_to(incident_id, IncidentState.APPROVAL_REQUIRED, "Medium-risk action requires an exact operator approval")
-            return OrchestrationResult(next_incident, "APPROVAL_REQUIRED", "request operator approval")
+            approval = self.approvals.request(incident_id, proposal)
+            return OrchestrationResult(next_incident, "APPROVAL_REQUIRED", f"await approval {approval['approval_id']}")
         blocked = self._advance_to(incident_id, IncidentState.BLOCKED, str(decision["reason"]))
         return OrchestrationResult(blocked, str(decision["outcome"]), "no mutation")
+
+    def approve(self, incident_id: str, approval_id: str, approver: str, decision: str) -> OrchestrationResult:
+        incident = self.incidents.get(incident_id)
+        if incident["state"] != IncidentState.APPROVAL_REQUIRED.value:
+            return OrchestrationResult(incident, str(incident["state"]), "approval is not applicable")
+        proposals = self.incidents.records(incident_id)["proposals"]
+        if not proposals:
+            raise ValueError("approval has no proposal")
+        proposal = proposals[-1]
+        approval = self.approvals.consume(incident_id, approval_id, proposal, approver, decision)
+        if approval["state"] == "REJECTED":
+            blocked = self._advance_to(incident_id, IncidentState.BLOCKED, "Operator rejected the exact pending proposal")
+            return OrchestrationResult(blocked, "BLOCKED", "no mutation")
+        return self._dispatch_and_verify(incident_id, proposal)
 
     def _evidence_for(self, incident: dict[str, object]) -> list[dict[str, object]]:
         category = str(incident["category"])
@@ -134,7 +151,8 @@ class IncidentOrchestrator:
         self.incidents.record("executions", incident_id, {"execution_id": execution_id, "idempotency_key": execution_id, "proposal_id": proposal["proposal_id"], "state": str(result.get("state", "SUCCEEDED")), "attempt_number": 1, "runner_result": result})
         self._advance_to(incident_id, IncidentState.VERIFYING, "Verify the intended state and a fresh business result")
         observed = self._verification_observation(proposal)
-        verification = verify_profile("catalog_search", {"index_present": True, "business_result": True}, observed, bool(observed.get("business_result")), True)
+        expected = self._verification_expectation(proposal)
+        verification = verify_profile(str(resolve(str(proposal["action_key"])).verification_profile), expected, observed, bool(observed.get("business_result")), True)
         self.incidents.record("verifications", incident_id, {"verification_id": new_id(), "execution_id": execution_id, **verification, "observed": observed})
         if verification["outcome"] == "VERIFIED":
             resolved = self._advance_to(incident_id, IncidentState.RESOLVED, "Runner mutation and fresh catalog query were verified")
@@ -143,13 +161,20 @@ class IncidentOrchestrator:
         return OrchestrationResult(failed, "FAILED", "inspect verification evidence")
 
     def _verification_observation(self, proposal: dict[str, object]) -> dict[str, object]:
-        if proposal["action_key"] != "mongo.create_search_index@1":
-            return {"index_present": False, "business_result": False}
-        products = self.db["products"]
-        return {
-            "index_present": "search_text_1" in products.index_information(),
-            "business_result": products.find_one({"search_text": "aegis notebook reliability"}) is not None,
-        }
+        if proposal["action_key"] == "mongo.create_search_index@1":
+            products = self.db["products"]
+            return {"index_present": "search_text_1" in products.index_information(), "business_result": products.find_one({"search_text": "aegis notebook reliability"}) is not None}
+        url = self.settings.inventory_url if proposal["action_key"] == "inventory.restore_capacity@1" else self.settings.worker_url
+        health = httpx.get(f"{url.rstrip('/')}/health", timeout=10).json()
+        desired = int(dict(proposal["parameters"])["desired"])
+        business_result = bool(health.get("status") == "ok" and health.get("capacity") == desired)
+        return {"capacity": health.get("capacity"), "business_result": business_result}
+
+    @staticmethod
+    def _verification_expectation(proposal: dict[str, object]) -> dict[str, object]:
+        if proposal["action_key"] == "mongo.create_search_index@1":
+            return {"index_present": True, "business_result": True}
+        return {"capacity": int(dict(proposal["parameters"])["desired"]), "business_result": True}
 
     def _advance_to(self, incident_id: str, target: IncidentState, reason: str) -> dict[str, object]:
         incident = self.incidents.get(incident_id)

@@ -13,9 +13,9 @@ from aegis.control.notifications import NotificationRecorder
 from aegis.control.orchestrator import IncidentOrchestrator
 
 router = APIRouter(prefix="/api/v1/orchestration", tags=["orchestration"])
-approvals = ApprovalStore()
-runner = RestrictedRunner()
 incidents = IncidentStore()
+approvals = ApprovalStore(incidents)
+runner = RestrictedRunner()
 rollback_guard = RollbackGuard()
 notifications = NotificationRecorder(incidents)
 orchestrator = IncidentOrchestrator(incidents)
@@ -65,8 +65,13 @@ def policy_check(payload: dict = Body(...)) -> dict[str, object]:
 
 @router.post("/approvals", dependencies=[Depends(require_operator)])
 def request_approval(payload: dict = Body(...)) -> dict[str, object]:
-    record = approvals.request(payload)
-    return {"approval_id": record.approval_id, "expires_at": record.expires_at}
+    record = approvals.request(str(payload["incident_id"]), payload["proposal"])
+    return {"approval_id": record["approval_id"], "expires_at": record["expires_at"]}
+
+@router.post("/incidents/{incident_id}/approve", dependencies=[Depends(require_operator)])
+def approve_incident(incident_id: str, payload: dict = Body(...)) -> dict[str, object]:
+    result = orchestrator.approve(incident_id, str(payload["approval_id"]), str(payload.get("approver", "operator")), str(payload.get("decision", "APPROVED")))
+    return {"incident_id": result.incident["incident_id"], "state": result.incident["state"], "outcome": result.outcome, "next_step": result.next_step}
 
 @router.post("/execute", dependencies=[Depends(require_operator)])
 def execute(payload: dict = Body(...)) -> dict[str, object]:

@@ -88,6 +88,7 @@ class IncidentStore:
             "hypotheses": [_document(record) for record in self.db["hypotheses"].find({"incident_id": incident_id})],
             "proposals": [_document(record) for record in self.db["proposals"].find({"incident_id": incident_id})],
             "policy_decisions": [_document(record) for record in self.db["policy_decisions"].find({"incident_id": incident_id})],
+            "approvals": [_document(record) for record in self.db["approvals"].find({"incident_id": incident_id})],
             "executions": [_document(record) for record in self.db["executions"].find({"incident_id": incident_id})],
             "verifications": [_document(record) for record in self.db["verifications"].find({"incident_id": incident_id})],
             "rollbacks": [_document(record) for record in self.db["rollbacks"].find({"incident_id": incident_id})],
