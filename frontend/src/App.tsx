@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
+import { BrowserRouter, Link, Route, Routes } from "react-router-dom";
+import { ShopPage } from "./customer/ShopPage";
+import { OverviewPage } from "./operations/OverviewPage";
 
 type Readiness = {
   database: string;
@@ -17,7 +20,7 @@ type SearchResult = {
 
 const phases = ["Trigger", "Analysis", "Remediation", "Resolution"];
 
-export default function App() {
+function LegacyScenario() {
   const [readiness, setReadiness] = useState<Readiness | null>(null);
   const [result, setResult] = useState<SearchResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -125,4 +128,8 @@ export default function App() {
       </section>
     </main>
   );
+}
+
+export default function App() {
+  return <BrowserRouter><nav><Link to="/shop">Shop</Link> | <Link to="/ops">Operations</Link></nav><Routes><Route path="/shop" element={<ShopPage />} /><Route path="/ops" element={<OverviewPage />} /><Route path="*" element={<LegacyScenario />} /></Routes></BrowserRouter>;
 }
