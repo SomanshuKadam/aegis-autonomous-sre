@@ -8,6 +8,7 @@ from aegis.api.orchestration import router as orchestration_router
 from aegis.api.commerce import router as commerce_router
 from opentelemetry import trace
 from pymongo import MongoClient
+from aegis.workload.service import WorkloadService
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Aegis Application Reliability API", version="1.0.0")
@@ -16,6 +17,7 @@ def create_app() -> FastAPI:
     settings = get_settings()
     client = MongoClient(settings.mongodb_uri.get_secret_value(), serverSelectionTimeoutMS=5000)
     collection = client[settings.mongo_database]["mycollection"]
+    workload = WorkloadService()
     tracer = trace.get_tracer("aegis.scenario")
     def has_search_index() -> bool:
         return any(any(key == "searchField" for key, _ in info.get("key", [])) for info in collection.index_information().values())
@@ -27,6 +29,13 @@ def create_app() -> FastAPI:
     def health() -> dict[str, object]: return {"status":"ok", "service":"aegis-api", "settings":get_settings().safe_summary()}
     @app.get("/api/v1/readiness")
     def readiness() -> dict[str, object]: return {"ready":True, "status":"ok", "service":"aegis-api"}
+    @app.post("/api/v1/workloads")
+    def start_workload(seed: int = 1, demo: bool = False) -> dict[str, object]:
+        if demo and not settings.demo_workload_enabled: raise HTTPException(status_code=403, detail="demo workload is disabled")
+        if not demo and not settings.normal_workload_enabled: raise HTTPException(status_code=403, detail="normal workload is disabled")
+        return workload.start(seed, demo).__dict__
+    @app.delete("/api/v1/workloads/{run_id}")
+    def stop_workload(run_id: str) -> dict[str, object]: return workload.stop(run_id).__dict__
     @app.get("/search")
     async def search(q: str = "needle") -> dict[str, object]:
         started = time.perf_counter(); indexed = has_search_index()
