@@ -152,6 +152,29 @@ services:
         limits:
           memory: 256M
 
+  workload-demo:
+    build:
+      context: ./app
+    command: ["uvicorn", "aegis.workload.main:app", "--host", "0.0.0.0", "--port", "8084"]
+    profiles: [demo]
+    restart: "no"
+    environment:
+      MONGODB_URI: mongodb://${MONGO_ROOT_USERNAME:-aegisadmin}:${MONGO_ROOT_PASSWORD:?MONGO_ROOT_PASSWORD must be set}@mongodb:27017/${MONGO_DATABASE:-mydatabase}?authSource=admin
+      MONGO_DATABASE: ${MONGO_DATABASE:-mydatabase}
+      OTEL_SERVICE_NAME: aegis-workload-demo
+      AEGIS_API_URL: http://api:8081
+      AEGIS_NORMAL_WORKLOAD_ENABLED: "false"
+      AEGIS_DEMO_WORKLOAD_ENABLED: "true"
+      AEGIS_WORKLOAD_RUN_ID: ${AEGIS_DEMO_RUN_ID:-demo-local}
+      AEGIS_WORKLOAD_SEED: ${AEGIS_DEMO_SEED:-1}
+      AEGIS_MUTATION_CAPABILITY: none
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    networks: [aegis]
+
   action-runner:
     build:
       context: ./app

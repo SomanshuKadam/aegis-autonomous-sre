@@ -1,7 +1,7 @@
 from __future__ import annotations
 import asyncio
 import time
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from aegis.config import get_settings
 from aegis.api.orchestration import router as orchestration_router
@@ -12,6 +12,7 @@ from aegis.api.orchestration import incidents
 from opentelemetry import trace
 from pymongo import MongoClient
 from aegis.workload.service import WorkloadService
+from aegis.api.security import require_operator
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Aegis Application Reliability API", version="1.0.0")
@@ -52,6 +53,13 @@ def create_app() -> FastAPI:
         return workload.start(seed, demo).__dict__
     @app.delete("/api/v1/workloads/{run_id}")
     def stop_workload(run_id: str) -> dict[str, object]: return workload.stop(run_id).__dict__
+    @app.post("/api/v1/workloads/demo/{run_id}/conditions/{condition}", dependencies=[Depends(require_operator)])
+    def expose_demo_condition(run_id: str, condition: str) -> dict[str, object]:
+        if not settings.demo_workload_enabled:
+            raise HTTPException(status_code=403, detail="demo workload is disabled")
+        run = workload.start(seed=1, demo=True, run_id=run_id)
+        exposed = workload.mark_condition_once(run.run_id, condition)
+        return {"run_id": run.run_id, "condition": condition, "exposed": exposed}
     @app.get("/search")
     async def search(q: str = "needle") -> dict[str, object]:
         started = time.perf_counter(); indexed = has_search_index()

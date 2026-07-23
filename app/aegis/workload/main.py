@@ -9,9 +9,11 @@ service = WorkloadService()
 state = {"run_id": None, "failures": 0, "running": True}
 
 async def generate() -> None:
-    if not os.getenv("AEGIS_NORMAL_WORKLOAD_ENABLED", "true").lower() == "true":
+    normal_enabled = os.getenv("AEGIS_NORMAL_WORKLOAD_ENABLED", "true").lower() == "true"
+    demo_enabled = os.getenv("AEGIS_DEMO_WORKLOAD_ENABLED", "false").lower() == "true"
+    if not normal_enabled and not demo_enabled:
         return
-    run = service.start(seed=int(os.getenv("AEGIS_WORKLOAD_SEED", "1")), run_id=os.getenv("AEGIS_WORKLOAD_RUN_ID", "normal-local"))
+    run = service.start(seed=int(os.getenv("AEGIS_WORKLOAD_SEED", "1")), demo=demo_enabled, run_id=os.getenv("AEGIS_WORKLOAD_RUN_ID", "normal-local"))
     state["run_id"] = run.run_id
     url = os.getenv("AEGIS_API_URL", "http://api:8081")
     async with httpx.AsyncClient(timeout=5) as client:
