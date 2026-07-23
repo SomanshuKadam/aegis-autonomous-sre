@@ -42,7 +42,7 @@ def create_order(payload: OrderInput, idempotency_key: str = Header(alias="Idemp
     headers = {"traceparent": traceparent} if traceparent else {}
     reservation = httpx.post(f"{settings.inventory_url.rstrip('/')}/reservations", headers=headers, json={"sku": payload.sku, "quantity": payload.quantity, "order_id": order_id}, timeout=10)
     if reservation.status_code >= 400: raise HTTPException(status_code=409, detail="inventory reservation failed")
-    return orders.create_order({"order_id": order_id, "sku": payload.sku, "quantity": payload.quantity, "total_minor": item.price_minor * payload.quantity, "currency": item.currency, "reservation_id": reservation.json()["reservation_id"], "trace_context_forwarded": bool(reservation.json().get("trace_context_received"))}, idempotency_key)
+    return orders.create_order({"order_id": order_id, "sku": payload.sku, "quantity": payload.quantity, "total_minor": item.price_minor * payload.quantity, "currency": item.currency, "reservation_id": reservation.json()["reservation_id"], "trace_context": traceparent, "trace_context_forwarded": bool(reservation.json().get("trace_context_received"))}, idempotency_key)
 
 @router.get("/orders/{order_id}")
 def get_order(order_id: str) -> dict[str, object]:
@@ -56,7 +56,8 @@ def create_reservation(payload: ReservationInput) -> dict[str, object]:
 def process_next() -> dict[str, object]:
     completed = orders.complete_next()
     if completed and completed.get("reservation_id"):
-        response = httpx.post(f"{settings.inventory_url.rstrip('/')}/reservations/{completed['reservation_id']}/commit", timeout=10)
+        headers = {"traceparent": str(completed["trace_context"])} if completed.get("trace_context") else {}
+        response = httpx.post(f"{settings.inventory_url.rstrip('/')}/reservations/{completed['reservation_id']}/commit", headers=headers, timeout=10)
         if response.status_code >= 400:
             raise HTTPException(status_code=502, detail="inventory commit failed")
     return {"order": completed, "processed": completed is not None}
