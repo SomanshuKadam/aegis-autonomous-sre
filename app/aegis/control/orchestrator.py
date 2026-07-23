@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import logging
 
 import httpx
 import time
 from fastapi.encoders import jsonable_encoder
 from pymongo import MongoClient
+from opentelemetry import trace
 
 from aegis.control.action_registry import resolve
 from aegis.control.approvals import ApprovalStore
@@ -38,9 +40,17 @@ class IncidentOrchestrator:
         self.evidence = ReadOnlyEvidence()
         self.db = MongoClient(self.settings.mongodb_uri.get_secret_value(), serverSelectionTimeoutMS=5000)[self.settings.mongo_database]
         self.approvals = ApprovalStore(incidents)
+        self.tracer = trace.get_tracer("aegis.orchestration")
+        self.logger = logging.getLogger("aegis.orchestration")
 
     def process(self, incident_id: str) -> OrchestrationResult:
         incident = self.incidents.get(incident_id)
+        with self.tracer.start_as_current_span("incident.process") as span:
+            span.set_attribute("aegis.incident_id", incident_id)
+            span.set_attribute("aegis.incident.category", str(incident["category"]))
+            return self._process(incident_id, incident)
+
+    def _process(self, incident_id: str, incident: dict[str, object]) -> OrchestrationResult:
         state = IncidentState(str(incident["state"]))
         if state in {IncidentState.BLOCKED, IncidentState.RESOLVED, IncidentState.FAILED, IncidentState.ROLLED_BACK, IncidentState.ESCALATED, IncidentState.APPROVAL_REQUIRED, IncidentState.AUTO_APPROVED, IncidentState.EXECUTING, IncidentState.VERIFYING}:
             return OrchestrationResult(incident, state.value, "no automatic progression")
@@ -98,6 +108,12 @@ class IncidentOrchestrator:
 
     def approve(self, incident_id: str, approval_id: str, approver: str, decision: str) -> OrchestrationResult:
         incident = self.incidents.get(incident_id)
+        with self.tracer.start_as_current_span("incident.approval") as span:
+            span.set_attribute("aegis.incident_id", incident_id)
+            span.set_attribute("aegis.approval.decision", decision)
+            return self._approve(incident_id, incident, approval_id, approver, decision)
+
+    def _approve(self, incident_id: str, incident: dict[str, object], approval_id: str, approver: str, decision: str) -> OrchestrationResult:
         if incident["state"] != IncidentState.APPROVAL_REQUIRED.value:
             return OrchestrationResult(incident, str(incident["state"]), "approval is not applicable")
         proposals = self.incidents.records(incident_id)["proposals"]
@@ -155,6 +171,12 @@ class IncidentOrchestrator:
         return proposal
 
     def _dispatch_and_verify(self, incident_id: str, proposal: dict[str, object]) -> OrchestrationResult:
+        with self.tracer.start_as_current_span("incident.execute") as span:
+            span.set_attribute("aegis.incident_id", incident_id)
+            span.set_attribute("aegis.action", str(proposal["action_key"]))
+            return self._dispatch_and_verify_inner(incident_id, proposal)
+
+    def _dispatch_and_verify_inner(self, incident_id: str, proposal: dict[str, object]) -> OrchestrationResult:
         self._advance_to(incident_id, IncidentState.EXECUTING, "Dispatch approved action to the isolated runner")
         execution_id = new_id()
         idempotency_key = canonical_hash({"incident_id": incident_id, "proposal_id": proposal["proposal_id"], "evidence_version": proposal["evidence_version"]})
@@ -268,6 +290,7 @@ class IncidentOrchestrator:
         incident = self.incidents.get(incident_id)
         if incident["state"] == target.value:
             return incident
+        self.logger.info("incident_lifecycle_transition", extra={"incident_id": incident_id, "target_state": target.value, "reason": reason})
         return self.incidents.advance(incident_id, target.value, f"orchestration-{target.value.lower()}-{new_id()}", actor="orchestrator", reason=reason)["incident"]
 
     @staticmethod

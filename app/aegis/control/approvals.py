@@ -24,6 +24,7 @@ class ApprovalStore:
             return existing
         record = {"approval_id": new_id(), "incident_id": incident_id, "proposal_id": proposal["proposal_id"], "proposal_hash": proposal_hash, "evidence_version": proposal["evidence_version"], "state": "PENDING", "expires_at": utc_now() + timedelta(minutes=ttl_minutes), "created_at": utc_now()}
         self.collection.insert_one(record)
+        self.incidents._append(incident_id, "approval", "approval", "pending", "Exact approval request recorded", record["created_at"])
         record.pop("_id", None)
         return record
 
@@ -37,6 +38,7 @@ class ApprovalStore:
         state = "APPROVED" if decision == "APPROVED" else "REJECTED"
         self.collection.update_one({"approval_id": approval_id, "state": "PENDING"}, {"$set": {"state": state, "approver": approver, "decided_at": utc_now()}})
         record = self.collection.find_one({"approval_id": approval_id})
+        self.incidents._append(incident_id, "approval", "approval", state.lower(), "Exact approval decision recorded", record["decided_at"])
         record.pop("_id", None)
         return record
 

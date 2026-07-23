@@ -121,6 +121,21 @@ class IncidentStore:
     def record(self, collection: str, incident_id: str, payload: dict[str, object]) -> dict[str, object]:
         document = {**payload, "incident_id": incident_id, "occurred_at": utc_now()}
         self.db[collection].insert_one(document)
+        timeline_labels = {
+            "evidence": ("evidence", "collected", "Current evidence snapshot collected"),
+            "hypotheses": ("investigation", "evaluated", "Root-cause hypothesis evaluated"),
+            "proposals": ("planning", "proposed", "Registered remediation action proposed"),
+            "policy_decisions": ("policy", str(payload.get("outcome", "evaluated")).lower(), "Deterministic policy decision recorded"),
+            "approvals": ("approval", str(payload.get("state", "recorded")).lower(), "Exact approval state recorded"),
+            "executions": ("execution", str(payload.get("state", "recorded")).lower(), "Restricted runner execution recorded"),
+            "verifications": ("verification", str(payload.get("outcome", "recorded")).lower(), "Post-action verification recorded"),
+            "rollbacks": ("rollback", str(payload.get("outcome", "recorded")).lower(), "Compensation or escalation recorded"),
+            "notifications": ("notification", str(payload.get("state", "recorded")).lower(), "External notification delivery recorded"),
+            "agent_runs": ("agent", str(payload.get("outcome", "recorded")).lower(), "Bounded investigation agent result recorded"),
+        }
+        if collection in timeline_labels:
+            stage, outcome, summary = timeline_labels[collection]
+            self._append(incident_id, stage, collection, outcome, summary, document["occurred_at"])
         return _document(document)
 
     def _append(self, incident_id: str, stage: str, event_type: str, outcome: str, summary: str, occurred_at: datetime, actor: str = "system") -> None:
