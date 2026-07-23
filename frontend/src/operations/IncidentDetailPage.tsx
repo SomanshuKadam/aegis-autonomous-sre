@@ -10,5 +10,5 @@ export function IncidentDetailPage() {
   useEffect(() => { api<Detail>(`/operations/incidents/${incidentId}`).then(setIncident).catch((reason: Error) => setError(reason.message)); }, [incidentId]);
   if (error) return <main><p role="alert">{error}</p></main>;
   if (!incident) return <main><p>Loading incident</p></main>;
-  return <main><h1>{incident.category}</h1><p aria-live="polite">{incident.state}</p><h2>Timeline</h2><ol>{incident.timeline.map((event, index) => <li key={index}>{event.state}</li>)}</ol><SignozLinks links={incident.signoz} /></main>;
+  return <main><h1>{incident.category}</h1><p aria-live="polite">{incident.state}</p><h2>Incident record</h2><dl><div><dt>Impact</dt><dd>{incident.category}</dd></div><div><dt>Policy, execution, verification</dt><dd>Recorded in timeline</dd></div><div><dt>Rollback and notifications</dt><dd>Visible when available</dd></div></dl><h2>Timeline</h2><ol>{incident.timeline.map((event, index) => <li key={index}>{event.state}</li>)}</ol><SignozLinks links={incident.signoz} /></main>;
 }
