@@ -32,16 +32,17 @@ def get_product(sku: str) -> dict[str, object]:
     return item.model_dump()
 
 @router.post("/orders", status_code=201)
-def create_order(payload: OrderInput, idempotency_key: str = Header(alias="Idempotency-Key")) -> dict[str, object]:
+def create_order(payload: OrderInput, idempotency_key: str = Header(alias="Idempotency-Key"), traceparent: str | None = Header(default=None)) -> dict[str, object]:
     if not idempotency_key: raise HTTPException(status_code=400, detail="Idempotency-Key is required")
     item = product(payload.sku)
     if item is None: raise HTTPException(status_code=404, detail="product does not exist")
     existing = orders.get_order_by_idempotency(idempotency_key)
     if existing: return existing
     order_id = new_id()
-    reservation = httpx.post(f"{settings.inventory_url.rstrip('/')}/reservations", json={"sku": payload.sku, "quantity": payload.quantity, "order_id": order_id}, timeout=10)
+    headers = {"traceparent": traceparent} if traceparent else {}
+    reservation = httpx.post(f"{settings.inventory_url.rstrip('/')}/reservations", headers=headers, json={"sku": payload.sku, "quantity": payload.quantity, "order_id": order_id}, timeout=10)
     if reservation.status_code >= 400: raise HTTPException(status_code=409, detail="inventory reservation failed")
-    return orders.create_order({"order_id": order_id, "sku": payload.sku, "quantity": payload.quantity, "total_minor": item.price_minor * payload.quantity, "currency": item.currency, "reservation_id": reservation.json()["reservation_id"]}, idempotency_key)
+    return orders.create_order({"order_id": order_id, "sku": payload.sku, "quantity": payload.quantity, "total_minor": item.price_minor * payload.quantity, "currency": item.currency, "reservation_id": reservation.json()["reservation_id"], "trace_context_forwarded": bool(reservation.json().get("trace_context_received"))}, idempotency_key)
 
 @router.get("/orders/{order_id}")
 def get_order(order_id: str) -> dict[str, object]:
