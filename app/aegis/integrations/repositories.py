@@ -9,6 +9,16 @@ class Repository:
         self.collection.update_one({key: document[key]}, {"$setOnInsert": dict(document)}, upsert=True)
         return self.collection.find_one({key: document[key]}) or {}
     def append(self, document: Mapping[str, object]) -> None: self.collection.insert_one(dict(document))
+    def optimistic_update(self, identity: Mapping[str, object], expected_version: int, changes: Mapping[str, object]) -> dict[str, object]:
+        query = {**dict(identity), "version": expected_version}
+        updated = self.collection.find_one_and_update(
+            query,
+            {"$set": dict(changes), "$inc": {"version": 1}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if updated is None:
+            raise ValueError("aggregate version conflict")
+        return updated
     def claim(self, query: Mapping[str, object], update: Mapping[str, object]) -> dict[str, object] | None:
         return self.collection.find_one_and_update(dict(query), dict(update), return_document=ReturnDocument.AFTER)
     def next_sequence(self, aggregate_id: str) -> int:
