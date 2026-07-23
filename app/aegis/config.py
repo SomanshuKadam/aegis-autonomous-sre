@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     operator_token: SecretStr = Field(SecretStr(""), alias="AEGIS_OPERATOR_TOKEN")
     runner_token: SecretStr = Field(SecretStr(""), alias="AEGIS_RUNNER_TOKEN")
     runner_url: str = Field("http://action-runner:8085", alias="AEGIS_RUNNER_URL")
+    api_url: str = Field("http://api:8081", alias="AEGIS_API_URL")
     inventory_url: str = Field("http://inventory:8082", alias="AEGIS_INVENTORY_URL")
     worker_url: str = Field("http://worker:8083", alias="AEGIS_WORKER_URL")
     normal_workload_enabled: bool = Field(True, alias="AEGIS_NORMAL_WORKLOAD_ENABLED")

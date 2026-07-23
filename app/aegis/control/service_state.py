@@ -17,10 +17,21 @@ class ServiceState:
     def read(self) -> dict[str, object]:
         value = self.collection.find_one({"service": self.service})
         value.pop("_id", None)
-        return value
+        return {**self.defaults, **value}
 
     def update_capacity(self, desired: int) -> dict[str, object]:
         current = self.read()
         value = self.collection.find_one_and_update({"service": self.service}, {"$set": {"previous": current["desired"], "desired": desired}}, return_document=ReturnDocument.AFTER)
         value.pop("_id", None)
         return value
+
+    def acquire_slot(self) -> bool:
+        value = self.collection.find_one_and_update(
+            {"service": self.service, "$expr": {"$lt": [{"$ifNull": ["$in_flight", 0]}, "$desired"]}},
+            {"$inc": {"in_flight": 1}},
+            return_document=ReturnDocument.AFTER,
+        )
+        return value is not None
+
+    def release_slot(self) -> None:
+        self.collection.update_one({"service": self.service, "in_flight": {"$gt": 0}}, {"$inc": {"in_flight": -1}})

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import httpx
+import time
 from fastapi.encoders import jsonable_encoder
 from pymongo import MongoClient
 
@@ -53,6 +54,11 @@ class IncidentOrchestrator:
         triage_result = triage(category, budget)
         self.incidents.record("agent_runs", incident_id, {"agent": "triage", "outcome": triage_result["outcome"], "category": category, "allowed_action": triage_result.get("allowed_actions"), "budget": budget.__dict__})
         evidence = self._evidence_for(incident)
+        if not self._has_required_condition(category, evidence):
+            for item in evidence:
+                self.incidents.record("evidence", incident_id, {"evidence_id": new_id(), "type": item["source"], "source": item["source"], "freshness": "FRESH" if item.get("fresh") else "STALE", "observation": item.get("observation", {}), "reference": {"category": category}, "required_for_mutation": True})
+            blocked = self._advance_to(incident_id, IncidentState.BLOCKED, "Required current evidence does not prove the reported bounded condition")
+            return OrchestrationResult(blocked, "BLOCKED", "collect current incident evidence")
         if category == "order_backlog":
             observation = dict(evidence[0].get("observation", {}))
             disposition = classify_backlog(int(observation.get("queue_depth", 0)), int(observation.get("oldest_age_seconds", 0)), bool(observation.get("healthy_workers")), bool(observation.get("at_maximum")), bool(observation.get("headroom")))
@@ -116,9 +122,13 @@ class IncidentOrchestrator:
                 self.evidence.mongo_state(str(target.get("database", "mydatabase")), str(target.get("collection", "products")), index_present),
             ]
         if category == "inventory_dependency":
+            health = httpx.get(f"{self.settings.inventory_url.rstrip('/')}/health", timeout=10).json()
+            metrics = dict(health.get("metrics", {}))
+            worker = httpx.get(f"{self.settings.worker_url.rstrip('/')}/health", timeout=10).json()
+            index_present = "search_text_1" in self.db["products"].index_information()
             return [
-                {"source": "inventory_health", "fresh": True, "observation": {"target": target, "reservation_failure": True, "catalog_excluded": True, "backlog_excluded": True}, "observed_at": now},
-                self.evidence.service_health("aegis-inventory", True),
+                {"source": "inventory_health", "fresh": True, "observation": {"target": target, "reservation_failure": int(metrics.get("failures", 0)) > 0, "error_rate": metrics.get("error_rate", 0.0), "p95_latency_ms": metrics.get("p95_latency_ms", 0.0), "capacity": health.get("capacity"), "saturated": health.get("resource_saturated"), "catalog_excluded": index_present, "backlog_excluded": not (int(worker.get("queue_depth", 0)) > 0 and int(worker.get("oldest_age_seconds", 0)) >= 30)}, "observed_at": now},
+                self.evidence.service_health("aegis-inventory", health.get("status") == "ok"),
             ]
         if category == "order_backlog":
             health = httpx.get(f"{self.settings.worker_url.rstrip('/')}/health", timeout=10).json()
@@ -134,7 +144,8 @@ class IncidentOrchestrator:
         target = dict(incident.get("target", {}))
         parameters: dict[str, object] = {}
         if category == "inventory_dependency":
-            parameters = {"desired": 2}
+            health = httpx.get(f"{self.settings.inventory_url.rstrip('/')}/health", timeout=10).json()
+            parameters = {"desired": min(int(health.get("capacity", 1)) + 1, int(health.get("maximum", 4)))}
         if category == "order_backlog":
             health = httpx.get(f"{self.settings.worker_url.rstrip('/')}/health", timeout=10).json()
             parameters = {"desired": int(health.get("capacity", 1)) + 1}
@@ -199,7 +210,18 @@ class IncidentOrchestrator:
         if proposal["action_key"] == "mongo.create_search_index@1":
             products = self.db["products"]
             return {"index_present": "search_text_1" in products.index_information(), "business_result": products.find_one({"search_text": "aegis notebook reliability"}) is not None}
-        url = self.settings.inventory_url if proposal["action_key"] == "inventory.restore_capacity@1" else self.settings.worker_url
+        if proposal["action_key"] == "inventory.restore_capacity@1":
+            time.sleep(5.2)
+            order = httpx.post(
+                f"{self.settings.api_url.rstrip('/')}/api/v1/orders",
+                headers={"Idempotency-Key": f"verification-{new_id()}"},
+                json={"sku": "sku-002", "quantity": 1},
+                timeout=15,
+            )
+            health = httpx.get(f"{self.settings.inventory_url.rstrip('/')}/health", timeout=10).json()
+            metrics = dict(health.get("metrics", {}))
+            return {"capacity": health.get("capacity"), "business_result": order.status_code == 201, "error_rate": metrics.get("error_rate", 1.0), "p95_latency_ms": metrics.get("p95_latency_ms", 9999.0)}
+        url = self.settings.worker_url
         health = httpx.get(f"{url.rstrip('/')}/health", timeout=10).json()
         desired = int(dict(proposal["parameters"])["desired"])
         business_result = bool(health.get("status") == "ok" and health.get("capacity") == desired)
@@ -209,7 +231,19 @@ class IncidentOrchestrator:
     def _verification_expectation(proposal: dict[str, object]) -> dict[str, object]:
         if proposal["action_key"] == "mongo.create_search_index@1":
             return {"index_present": True, "business_result": True}
+        if proposal["action_key"] == "inventory.restore_capacity@1":
+            return {"capacity": int(dict(proposal["parameters"])["desired"]), "business_result": True, "error_rate": 0.0}
         return {"capacity": int(dict(proposal["parameters"])["desired"]), "business_result": True}
+
+    @staticmethod
+    def _has_required_condition(category: str, evidence: list[dict[str, object]]) -> bool:
+        if category == "catalog_search":
+            observation = dict(evidence[0].get("observation", {}))
+            return bool(observation.get("slow_operation") and observation.get("index_absent"))
+        if category == "inventory_dependency":
+            observation = dict(evidence[0].get("observation", {}))
+            return bool(observation.get("reservation_failure") and observation.get("catalog_excluded") and observation.get("backlog_excluded"))
+        return category == "order_backlog"
 
     def _advance_to(self, incident_id: str, target: IncidentState, reason: str) -> dict[str, object]:
         incident = self.incidents.get(incident_id)
