@@ -1,5 +1,6 @@
 from __future__ import annotations
 from fastapi import APIRouter, Body, Depends
+from pydantic import BaseModel, Field
 from aegis.api.security import require_operator, require_orchestrator
 from aegis.control.action_registry import resolve
 from aegis.control.approvals import ApprovalStore
@@ -12,8 +13,17 @@ approvals = ApprovalStore()
 runner = RestrictedRunner()
 incidents = IncidentStore()
 
+class AlertInput(BaseModel):
+    source: str = Field(min_length=1)
+    fingerprint: str = Field(min_length=1)
+    category: str = Field(min_length=1)
+    target: dict[str, object] = {}
+
 @router.post("/alerts", dependencies=[Depends(require_orchestrator)])
-def ingest_alert() -> dict[str, str]: return {"disposition":"accepted"}
+def ingest_alert(payload: AlertInput) -> dict[str, object]:
+    from aegis.control.idempotency import dedup_key
+    incident = incidents.create(payload.category, dedup_key(payload.source, payload.fingerprint, payload.category, payload.target))
+    return {"disposition": "accepted", "incident_id": incident["incident_id"], "deduplicated": len(incident["timeline"]) > 0}
 
 @router.post("/incidents")
 def create_incident(payload: dict = Body(...)) -> dict[str, object]:
