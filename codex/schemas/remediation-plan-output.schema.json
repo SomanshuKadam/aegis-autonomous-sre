@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","required":["action_key","target"],"additionalProperties":false,"properties":{"action_key":{"type":"string","pattern":"^[a-z._]+@[0-9]+$"},"target":{"type":"object"}}}
