@@ -32,3 +32,10 @@ class CorrelationIds(BaseModel):
         if value is not None and (len(value) != 32 or any(char not in "0123456789abcdef" for char in value)):
             raise ValueError("trace_id must be 32 lowercase hexadecimal characters")
         return value
+
+    @field_validator("span_id")
+    @classmethod
+    def validate_span(cls, value: str | None) -> str | None:
+        if value is not None and (len(value) != 16 or any(char not in "0123456789abcdef" for char in value)):
+            raise ValueError("span_id must be 16 lowercase hexadecimal characters")
+        return value
