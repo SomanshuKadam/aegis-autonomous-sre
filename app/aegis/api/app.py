@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio
 import time
+from datetime import datetime, timezone
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from aegis.config import get_settings
@@ -24,6 +25,8 @@ def create_app() -> FastAPI:
     client = MongoClient(settings.mongodb_uri.get_secret_value(), serverSelectionTimeoutMS=5000)
     collection = client[settings.mongo_database]["mycollection"]
     products = client[settings.mongo_database]["products"]
+    catalog_operations = client[settings.mongo_database]["catalog_operations"]
+    catalog_operations.create_index("occurred_at")
     if products.estimated_document_count() == 0:
         products.insert_many([
             {"product_id": "product-001", "sku": "sku-001", "name": "Aegis Notebook", "search_text": "aegis notebook reliability", "price_minor": 1299},
@@ -79,7 +82,10 @@ def create_app() -> FastAPI:
                 await asyncio.sleep(2.5)
             documents = list(products.find({"search_text": q}, {"_id": 0}).limit(20))
         context = trace.get_current_span().get_span_context()
-        return {"query": q, "items": documents, "index_present": indexed, "latency_ms": round((time.perf_counter()-started)*1000, 2), "trace_id": format(context.trace_id, "032x") if context.is_valid else ""}
+        trace_id = format(context.trace_id, "032x") if context.is_valid else ""
+        latency_ms = round((time.perf_counter()-started)*1000, 2)
+        catalog_operations.insert_one({"trace_id": trace_id, "index_present": indexed, "latency_ms": latency_ms, "result_count": len(documents), "occurred_at": datetime.now(timezone.utc)})
+        return {"query": q, "items": documents, "index_present": indexed, "latency_ms": latency_ms, "trace_id": trace_id}
     @app.get("/readiness/remediation")
     def remediation_readiness() -> dict[str, object]: return {"database":settings.mongo_database,"collection":"products","field":"search_text","index_present":has_catalog_index()}
     return app

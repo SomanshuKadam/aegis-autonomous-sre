@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import logging
 
 import httpx
@@ -154,8 +154,16 @@ class IncidentOrchestrator:
         now = datetime.now(timezone.utc)
         if category == "catalog_search":
             index_present = "search_text_1" in self.db["products"].index_information()
+            trace_id = str(incident.get("trace_id") or "")
+            query: dict[str, object] = {"occurred_at": {"$gte": now - timedelta(minutes=5)}}
+            if trace_id:
+                query["trace_id"] = trace_id
+            operations = list(self.db["catalog_operations"].find(query, {"_id": 0}).sort("occurred_at", -1).limit(20))
+            latencies = sorted(float(operation.get("latency_ms", 0.0)) for operation in operations)
+            p95_latency_ms = latencies[max(0, int(len(latencies) * 0.95) - 1)] if latencies else 0.0
+            recent_trace_observed = bool(operations) and (not trace_id or str(operations[0].get("trace_id")) == trace_id)
             return [
-                {"source": "catalog_search", "fresh": True, "observation": {"trace_id": incident.get("trace_id"), "target": target, "slow_operation": not index_present, "index_absent": not index_present}, "observed_at": now},
+                {"source": "catalog_search", "fresh": recent_trace_observed, "observation": {"trace_id": trace_id or None, "target": target, "sample_count": len(operations), "p95_latency_ms": p95_latency_ms, "slow_operation": recent_trace_observed and p95_latency_ms >= self.settings.search_recovery_ms, "index_absent": not index_present}, "observed_at": now},
                 self.evidence.service_health("aegis-api", True),
                 self.evidence.mongo_state(str(target.get("database", "mydatabase")), str(target.get("collection", "products")), index_present),
             ]
@@ -256,7 +264,10 @@ class IncidentOrchestrator:
     def _verification_observation(self, proposal: dict[str, object]) -> dict[str, object]:
         if proposal["action_key"] == "mongo.create_search_index@1":
             products = self.db["products"]
-            return {"index_present": "search_text_1" in products.index_information(), "business_result": products.find_one({"search_text": "aegis notebook reliability"}) is not None}
+            response = httpx.get(f"{self.settings.api_url.rstrip('/')}/api/v1/catalog/search", timeout=15)
+            payload = response.json() if response.is_success else {}
+            latency_ms = float(payload.get("latency_ms", 9999.0))
+            return {"index_present": "search_text_1" in products.index_information(), "business_result": response.status_code == 200 and bool(payload.get("items")), "latency_within_recovery_threshold": latency_ms < self.settings.search_recovery_ms, "latency_ms": latency_ms}
         if proposal["action_key"] == "inventory.restore_capacity@1":
             time.sleep(5.2)
             order = httpx.post(
@@ -291,7 +302,7 @@ class IncidentOrchestrator:
     @staticmethod
     def _verification_expectation(proposal: dict[str, object]) -> dict[str, object]:
         if proposal["action_key"] == "mongo.create_search_index@1":
-            return {"index_present": True, "business_result": True}
+            return {"index_present": True, "business_result": True, "latency_within_recovery_threshold": True}
         if proposal["action_key"] == "inventory.restore_capacity@1":
             return {"capacity": int(dict(proposal["parameters"])["desired"]), "business_result": True, "error_rate": 0.0}
         if proposal["action_key"] == "worker.set_capacity@1":
