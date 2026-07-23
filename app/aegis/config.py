@@ -27,6 +27,12 @@ class Settings(BaseSettings):
             "demo_workload_enabled": self.demo_workload_enabled,
         }
 
+    def validate_control_plane(self) -> None:
+        missing = []
+        if not self.orchestrator_token.get_secret_value(): missing.append("AEGIS_ORCHESTRATOR_TOKEN")
+        if not self.operator_token.get_secret_value(): missing.append("AEGIS_OPERATOR_TOKEN")
+        if missing: raise ValueError(f"required control-plane configuration is missing: {', '.join(missing)}")
+
 
 @lru_cache
 def get_settings() -> Settings:
