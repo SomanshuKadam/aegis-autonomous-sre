@@ -23,6 +23,7 @@ class AlertInput(BaseModel):
     fingerprint: str = Field(min_length=1)
     category: str = Field(min_length=1)
     target: dict[str, object] = {}
+    trace_id: str | None = Field(default=None, pattern="^[0-9a-f]{32}$")
 
 class AdvanceInput(BaseModel):
     target_state: str = Field(min_length=1)
@@ -31,20 +32,20 @@ class AdvanceInput(BaseModel):
 @router.post("/alerts", dependencies=[Depends(require_orchestrator)])
 def ingest_alert(payload: AlertInput) -> dict[str, object]:
     from aegis.control.idempotency import dedup_key
-    incident = incidents.create(payload.category, dedup_key(payload.source, payload.fingerprint, payload.category, payload.target))
-    return {"disposition": "accepted", "incident_id": incident["incident_id"], "deduplicated": len(incident["timeline"]) > 0}
+    incident = incidents.create(payload.category, dedup_key(payload.source, payload.fingerprint, payload.category, payload.target), source=payload.source, fingerprint=payload.fingerprint, target=payload.target, trace_id=payload.trace_id)
+    return {"disposition": "accepted", "incident_id": incident["incident_id"], "deduplicated": int(incident.get("alert_count", 1)) > 1}
 
 @router.post("/incidents")
 def create_incident(payload: dict = Body(...)) -> dict[str, object]:
-    return incidents.create(str(payload["category"]), str(payload["dedup_key"]))
+    return incidents.create(str(payload["category"]), str(payload["dedup_key"]), source="manual", target=payload.get("target", {}))
 
 @router.get("/incidents")
 def list_incidents() -> dict[str, object]:
-    return {"items": list(incidents.items.values())}
+    return {"items": incidents.list()}
 
 @router.get("/incidents/{incident_id}")
 def get_incident(incident_id: str) -> dict[str, object]:
-    return incidents.items[incident_id]
+    return {**incidents.get(incident_id), **incidents.records(incident_id)}
 
 @router.post("/incidents/{incident_id}/advance", dependencies=[Depends(require_orchestrator)])
 def advance_incident(incident_id: str, payload: AdvanceInput) -> dict[str, object]:
