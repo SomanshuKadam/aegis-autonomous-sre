@@ -24,6 +24,10 @@ class AlertInput(BaseModel):
     category: str = Field(min_length=1)
     target: dict[str, object] = {}
 
+class AdvanceInput(BaseModel):
+    target_state: str = Field(min_length=1)
+    command_id: str = Field(min_length=1)
+
 @router.post("/alerts", dependencies=[Depends(require_orchestrator)])
 def ingest_alert(payload: AlertInput) -> dict[str, object]:
     from aegis.control.idempotency import dedup_key
@@ -43,8 +47,8 @@ def get_incident(incident_id: str) -> dict[str, object]:
     return incidents.items[incident_id]
 
 @router.post("/incidents/{incident_id}/advance", dependencies=[Depends(require_orchestrator)])
-def advance_incident(incident_id: str, payload: dict = Body(...)) -> dict[str, object]:
-    return incidents.advance(incident_id, str(payload["target_state"]))
+def advance_incident(incident_id: str, payload: AdvanceInput) -> dict[str, object]:
+    return incidents.advance(incident_id, payload.target_state, payload.command_id)
 
 @router.post("/policy", dependencies=[Depends(require_orchestrator)])
 def policy_check(payload: dict = Body(...)) -> dict[str, object]:

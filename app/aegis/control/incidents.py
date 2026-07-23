@@ -5,13 +5,25 @@ from aegis.control.state_machine import transition
 from aegis.types import new_id
 
 class IncidentStore:
-    def __init__(self) -> None: self.items: dict[str, dict[str, object]] = {}
+    def __init__(self) -> None:
+        self.items: dict[str, dict[str, object]] = {}
+        self.commands: dict[tuple[str, str], dict[str, object]] = {}
     def create(self, category: str, dedup_key: str) -> dict[str, object]:
         existing = next((item for item in self.items.values() if item["dedup_key"] == dedup_key), None)
         if existing: return existing
         incident = {"incident_id": new_id(), "category": category, "dedup_key": dedup_key, "state": IncidentState.DETECTED.value, "timeline": [], "created_at": datetime.now(timezone.utc)}
         self.items[str(incident["incident_id"])] = incident; return incident
-    def advance(self, incident_id: str, target: str) -> dict[str, object]:
-        incident = self.items[incident_id]; incident["state"] = transition(IncidentState(str(incident["state"])), IncidentState(target)).value
+    def advance(self, incident_id: str, target: str, command_id: str) -> dict[str, object]:
+        command_key = (incident_id, command_id)
+        if command_key in self.commands:
+            return self.commands[command_key]
+        incident = self.items[incident_id]
+        if incident["state"] == target:
+            result = {"incident": incident, "disposition": "already-at-target", "command_id": command_id}
+            self.commands[command_key] = result
+            return result
+        incident["state"] = transition(IncidentState(str(incident["state"])), IncidentState(target)).value
         incident["timeline"].append({"state": incident["state"], "at": datetime.now(timezone.utc)})
-        return incident
+        result = {"incident": incident, "disposition": "advanced", "command_id": command_id}
+        self.commands[command_key] = result
+        return result

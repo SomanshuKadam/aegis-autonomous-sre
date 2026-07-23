@@ -52,6 +52,7 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://host.docker.internal:4318
       OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
       OTEL_RESOURCE_ATTRIBUTES: deployment.environment=local,service.version=1.0.0
+      AEGIS_MUTATION_CAPABILITY: none
     ports:
       - "8081:8081"
     extra_hosts:
@@ -75,6 +76,7 @@ services:
       MONGODB_URI: mongodb://${MONGO_ROOT_USERNAME:-aegisadmin}:${MONGO_ROOT_PASSWORD:?MONGO_ROOT_PASSWORD must be set}@mongodb:27017/${MONGO_DATABASE:-mydatabase}?authSource=admin
       MONGO_DATABASE: ${MONGO_DATABASE:-mydatabase}
       OTEL_SERVICE_NAME: aegis-inventory
+      AEGIS_MUTATION_CAPABILITY: none
     depends_on:
       mongodb:
         condition: service_healthy
@@ -99,6 +101,7 @@ services:
       MONGO_DATABASE: ${MONGO_DATABASE:-mydatabase}
       OTEL_SERVICE_NAME: aegis-worker
       AEGIS_API_URL: http://api:8081
+      AEGIS_MUTATION_CAPABILITY: none
     depends_on:
       mongodb:
         condition: service_healthy
@@ -126,6 +129,7 @@ services:
       AEGIS_NORMAL_WORKLOAD_ENABLED: ${AEGIS_NORMAL_WORKLOAD_ENABLED:-true}
       AEGIS_WORKLOAD_STATE_PATH: /state/runs.json
       AEGIS_WORKLOAD_INTERVAL_SECONDS: ${AEGIS_WORKLOAD_INTERVAL_SECONDS:-5}
+      AEGIS_MUTATION_CAPABILITY: none
     depends_on:
       mongodb:
         condition: service_healthy
@@ -151,6 +155,7 @@ services:
       MONGODB_URI: mongodb://${MONGO_ROOT_USERNAME:-aegisadmin}:${MONGO_ROOT_PASSWORD:?MONGO_ROOT_PASSWORD must be set}@mongodb:27017/${MONGO_DATABASE:-mydatabase}?authSource=admin
       MONGO_DATABASE: ${MONGO_DATABASE:-mydatabase}
       OTEL_SERVICE_NAME: aegis-action-runner
+      AEGIS_MUTATION_CAPABILITY: runner
     depends_on:
       mongodb:
         condition: service_healthy
@@ -206,6 +211,7 @@ services:
       SIGNOZ_API_KEY: ${SIGNOZ_API_KEY:-}
       CODEX_HOME: /home/node/.codex
       AEGIS_API_URL: http://api:8081
+      AEGIS_ORCHESTRATOR_TOKEN: ${AEGIS_ORCHESTRATOR_TOKEN:?AEGIS_ORCHESTRATOR_TOKEN must be set}
     ports:
       - "5678:5678"
     group_add:
