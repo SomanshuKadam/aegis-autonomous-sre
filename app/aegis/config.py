@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     mongo_database: str = Field("mydatabase", alias="MONGO_DATABASE")
     orchestrator_token: SecretStr = Field(SecretStr(""), alias="AEGIS_ORCHESTRATOR_TOKEN")
     operator_token: SecretStr = Field(SecretStr(""), alias="AEGIS_OPERATOR_TOKEN")
+    runner_token: SecretStr = Field(SecretStr(""), alias="AEGIS_RUNNER_TOKEN")
+    runner_url: str = Field("http://action-runner:8085", alias="AEGIS_RUNNER_URL")
     normal_workload_enabled: bool = Field(True, alias="AEGIS_NORMAL_WORKLOAD_ENABLED")
     demo_workload_enabled: bool = Field(False, alias="AEGIS_DEMO_WORKLOAD_ENABLED")
     search_recovery_ms: int = Field(2000, ge=1, alias="AEGIS_SEARCH_RECOVERY_MS")
@@ -31,6 +33,7 @@ class Settings(BaseSettings):
         missing = []
         if not self.orchestrator_token.get_secret_value(): missing.append("AEGIS_ORCHESTRATOR_TOKEN")
         if not self.operator_token.get_secret_value(): missing.append("AEGIS_OPERATOR_TOKEN")
+        if not self.runner_token.get_secret_value(): missing.append("AEGIS_RUNNER_TOKEN")
         if missing: raise ValueError(f"required control-plane configuration is missing: {', '.join(missing)}")
 
 

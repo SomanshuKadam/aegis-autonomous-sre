@@ -3,6 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+import httpx
+from fastapi.encoders import jsonable_encoder
+from pymongo import MongoClient
+
 from aegis.control.action_registry import resolve
 from aegis.control.agents import collect, evaluate_hypotheses, plan, triage
 from aegis.control.budgets import InvestigationBudget
@@ -10,6 +14,8 @@ from aegis.control.evidence import ReadOnlyEvidence
 from aegis.control.incidents import IncidentStore
 from aegis.control.models import IncidentState
 from aegis.control.policy import evaluate
+from aegis.control.verification import verify_profile
+from aegis.config import Settings, get_settings
 from aegis.types import canonical_hash, new_id, utc_now
 
 
@@ -26,9 +32,11 @@ class IncidentOrchestrator:
     Mutating execution remains a separate action-runner concern.
     """
 
-    def __init__(self, incidents: IncidentStore) -> None:
+    def __init__(self, incidents: IncidentStore, settings: Settings | None = None) -> None:
         self.incidents = incidents
+        self.settings = settings or get_settings()
         self.evidence = ReadOnlyEvidence()
+        self.db = MongoClient(self.settings.mongodb_uri.get_secret_value(), serverSelectionTimeoutMS=5000)[self.settings.mongo_database]
 
     def process(self, incident_id: str) -> OrchestrationResult:
         incident = self.incidents.get(incident_id)
@@ -66,8 +74,8 @@ class IncidentOrchestrator:
         self.incidents.record("policy_decisions", incident_id, {"policy_decision_id": new_id(), "proposal_hash": canonical_hash(proposal), "outcome": decision["outcome"], "reason": decision["reason"], "risk": action.risk})
         self._advance_to(incident_id, IncidentState.POLICY_CHECKED, str(decision["reason"]))
         if decision["outcome"] == "AUTO_APPROVED":
-            next_incident = self._advance_to(incident_id, IncidentState.AUTO_APPROVED, "Low-risk registered action is automatically approved")
-            return OrchestrationResult(next_incident, "AUTO_APPROVED", "dispatch action runner")
+            self._advance_to(incident_id, IncidentState.AUTO_APPROVED, "Low-risk registered action is automatically approved")
+            return self._dispatch_and_verify(incident_id, proposal)
         if decision["outcome"] == "APPROVAL_REQUIRED":
             next_incident = self._advance_to(incident_id, IncidentState.APPROVAL_REQUIRED, "Medium-risk action requires an exact operator approval")
             return OrchestrationResult(next_incident, "APPROVAL_REQUIRED", "request operator approval")
@@ -79,10 +87,11 @@ class IncidentOrchestrator:
         target = dict(incident.get("target", {}))
         now = datetime.now(timezone.utc)
         if category == "catalog_search":
+            index_present = "search_text_1" in self.db["products"].index_information()
             return [
-                {"source": "catalog_search", "fresh": True, "observation": {"trace_id": incident.get("trace_id"), "target": target, "slow_operation": True, "index_absent": True}, "observed_at": now},
+                {"source": "catalog_search", "fresh": True, "observation": {"trace_id": incident.get("trace_id"), "target": target, "slow_operation": not index_present, "index_absent": not index_present}, "observed_at": now},
                 self.evidence.service_health("aegis-api", True),
-                self.evidence.mongo_state(str(target.get("database", "mydatabase")), str(target.get("collection", "products")), False),
+                self.evidence.mongo_state(str(target.get("database", "mydatabase")), str(target.get("collection", "products")), index_present),
             ]
         if category == "inventory_dependency":
             return [
@@ -105,6 +114,42 @@ class IncidentOrchestrator:
         if category == "order_backlog":
             parameters = {"desired": 2}
         return {"proposal_id": new_id(), "incident_id": incident["incident_id"], "action_key": action_key, "target": target, "parameters": parameters, "desired_state": parameters, "evidence_version": int(incident.get("evidence_version", 1)), "created_at": utc_now()}
+
+    def _dispatch_and_verify(self, incident_id: str, proposal: dict[str, object]) -> OrchestrationResult:
+        self._advance_to(incident_id, IncidentState.EXECUTING, "Dispatch approved action to the isolated runner")
+        execution_id = new_id()
+        try:
+            response = httpx.post(
+                f"{self.settings.runner_url.rstrip('/')}/actions/execute",
+                headers={"Authorization": f"Bearer {self.settings.runner_token.get_secret_value()}"},
+                json={"proposal": jsonable_encoder(proposal)},
+                timeout=65,
+            )
+            response.raise_for_status()
+            result = response.json()
+        except httpx.HTTPError as exc:
+            self.incidents.record("executions", incident_id, {"execution_id": execution_id, "proposal_id": proposal["proposal_id"], "state": "FAILED", "attempt_number": 1, "error": str(exc)})
+            failed = self._advance_to(incident_id, IncidentState.FAILED, "Action runner did not complete the approved action")
+            return OrchestrationResult(failed, "FAILED", "inspect runner execution")
+        self.incidents.record("executions", incident_id, {"execution_id": execution_id, "proposal_id": proposal["proposal_id"], "state": str(result.get("state", "SUCCEEDED")), "attempt_number": 1, "runner_result": result})
+        self._advance_to(incident_id, IncidentState.VERIFYING, "Verify the intended state and a fresh business result")
+        observed = self._verification_observation(proposal)
+        verification = verify_profile("catalog_search", {"index_present": True, "business_result": True}, observed, bool(observed.get("business_result")), True)
+        self.incidents.record("verifications", incident_id, {"verification_id": new_id(), "execution_id": execution_id, **verification, "observed": observed})
+        if verification["outcome"] == "VERIFIED":
+            resolved = self._advance_to(incident_id, IncidentState.RESOLVED, "Runner mutation and fresh catalog query were verified")
+            return OrchestrationResult(resolved, "RESOLVED", "notify operations")
+        failed = self._advance_to(incident_id, IncidentState.FAILED, "Runner mutation could not be verified")
+        return OrchestrationResult(failed, "FAILED", "inspect verification evidence")
+
+    def _verification_observation(self, proposal: dict[str, object]) -> dict[str, object]:
+        if proposal["action_key"] != "mongo.create_search_index@1":
+            return {"index_present": False, "business_result": False}
+        products = self.db["products"]
+        return {
+            "index_present": "search_text_1" in products.index_information(),
+            "business_result": products.find_one({"search_text": "aegis notebook reliability"}) is not None,
+        }
 
     def _advance_to(self, incident_id: str, target: IncidentState, reason: str) -> dict[str, object]:
         incident = self.incidents.get(incident_id)

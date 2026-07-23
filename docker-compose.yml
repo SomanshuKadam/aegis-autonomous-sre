@@ -55,6 +55,8 @@ services:
       AEGIS_MUTATION_CAPABILITY: none
       AEGIS_ORCHESTRATOR_TOKEN: ${AEGIS_ORCHESTRATOR_TOKEN:?AEGIS_ORCHESTRATOR_TOKEN must be set}
       AEGIS_OPERATOR_TOKEN: ${AEGIS_OPERATOR_TOKEN:?AEGIS_OPERATOR_TOKEN must be set}
+      AEGIS_RUNNER_TOKEN: ${AEGIS_RUNNER_TOKEN:?AEGIS_RUNNER_TOKEN must be set}
+      AEGIS_RUNNER_URL: http://action-runner:8085
     ports:
       - "8081:8081"
     extra_hosts:
@@ -158,6 +160,7 @@ services:
       MONGO_DATABASE: ${MONGO_DATABASE:-mydatabase}
       OTEL_SERVICE_NAME: aegis-action-runner
       AEGIS_MUTATION_CAPABILITY: runner
+      AEGIS_RUNNER_TOKEN: ${AEGIS_RUNNER_TOKEN:?AEGIS_RUNNER_TOKEN must be set}
     depends_on:
       mongodb:
         condition: service_healthy
