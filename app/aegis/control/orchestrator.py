@@ -134,7 +134,7 @@ class IncidentOrchestrator:
             health = httpx.get(f"{self.settings.worker_url.rstrip('/')}/health", timeout=10).json()
             capacity = int(health.get("capacity", 0)); maximum = int(health.get("maximum", 4))
             return [
-                {"source": "queue_backlog", "fresh": True, "observation": {"target": target, "queue_depth": 10, "oldest_age_seconds": 31, "healthy_workers": health.get("status") == "ok", "headroom": bool(health.get("resource_headroom")), "at_maximum": capacity >= maximum, "capacity": capacity, "maximum": maximum}, "observed_at": now},
+                {"source": "queue_backlog", "fresh": True, "observation": {"target": target, "queue_depth": int(health.get("queue_depth", 0)), "oldest_age_seconds": int(health.get("oldest_age_seconds", 0)), "healthy_workers": health.get("status") == "ok", "headroom": bool(health.get("resource_headroom")), "at_maximum": capacity >= maximum, "capacity": capacity, "maximum": maximum, "worker_failures": int(health.get("failures", 0))}, "observed_at": now},
                 self.evidence.service_health("aegis-worker", health.get("status") == "ok"),
             ]
         return [self.evidence.unavailable("incident", f"unsupported incident category {category}")]
@@ -149,7 +149,10 @@ class IncidentOrchestrator:
         if category == "order_backlog":
             health = httpx.get(f"{self.settings.worker_url.rstrip('/')}/health", timeout=10).json()
             parameters = {"desired": int(health.get("capacity", 1)) + 1}
-        return {"proposal_id": new_id(), "incident_id": incident["incident_id"], "action_key": action_key, "target": target, "parameters": parameters, "desired_state": parameters, "evidence_version": int(incident.get("evidence_version", 1)), "created_at": utc_now()}
+        proposal = {"proposal_id": new_id(), "incident_id": incident["incident_id"], "action_key": action_key, "target": target, "parameters": parameters, "desired_state": parameters, "evidence_version": int(incident.get("evidence_version", 1)), "created_at": utc_now()}
+        if category == "order_backlog":
+            proposal["backlog_baseline"] = {"queue_depth": int(health.get("queue_depth", 0)), "oldest_age_seconds": int(health.get("oldest_age_seconds", 0)), "failures": int(health.get("failures", 0))}
+        return proposal
 
     def _dispatch_and_verify(self, incident_id: str, proposal: dict[str, object]) -> OrchestrationResult:
         self._advance_to(incident_id, IncidentState.EXECUTING, "Dispatch approved action to the isolated runner")
@@ -224,6 +227,20 @@ class IncidentOrchestrator:
         url = self.settings.worker_url
         health = httpx.get(f"{url.rstrip('/')}/health", timeout=10).json()
         desired = int(dict(proposal["parameters"])["desired"])
+        if proposal["action_key"] == "worker.set_capacity@1":
+            baseline = dict(proposal.get("backlog_baseline", {}))
+            deadline = time.monotonic() + 35
+            health = httpx.get(f"{url.rstrip('/')}/health", timeout=10).json()
+            while time.monotonic() < deadline and int(health.get("oldest_age_seconds", 0)) >= 30:
+                time.sleep(1.0)
+                health = httpx.get(f"{url.rstrip('/')}/health", timeout=10).json()
+            return {
+                "capacity": health.get("capacity"),
+                "business_result": int(health.get("queue_depth", 0)) < int(baseline.get("queue_depth", 0)),
+                "queue_trending_down": int(health.get("queue_depth", 0)) < int(baseline.get("queue_depth", 0)),
+                "oldest_age_below_30": int(health.get("oldest_age_seconds", 0)) < 30,
+                "no_new_worker_errors": int(health.get("failures", 0)) <= int(baseline.get("failures", 0)),
+            }
         business_result = bool(health.get("status") == "ok" and health.get("capacity") == desired)
         return {"capacity": health.get("capacity"), "business_result": business_result}
 
@@ -233,6 +250,8 @@ class IncidentOrchestrator:
             return {"index_present": True, "business_result": True}
         if proposal["action_key"] == "inventory.restore_capacity@1":
             return {"capacity": int(dict(proposal["parameters"])["desired"]), "business_result": True, "error_rate": 0.0}
+        if proposal["action_key"] == "worker.set_capacity@1":
+            return {"capacity": int(dict(proposal["parameters"])["desired"]), "business_result": True, "queue_trending_down": True, "oldest_age_below_30": True, "no_new_worker_errors": True}
         return {"capacity": int(dict(proposal["parameters"])["desired"]), "business_result": True}
 
     @staticmethod

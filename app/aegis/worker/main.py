@@ -16,8 +16,9 @@ async def consume() -> None:
     async with httpx.AsyncClient(timeout=5) as client:
         while state["running"]:
             try:
-                result = (await client.post(f"{url}/api/v1/orders/process-next")).json()
-                state["processed"] += int(bool(result.get("processed")))
+                desired = int(capacity.read()["desired"])
+                responses = await asyncio.gather(*[client.post(f"{url}/api/v1/orders/process-next") for _ in range(desired)])
+                state["processed"] += sum(int(bool(response.json().get("processed"))) for response in responses)
             except Exception:
                 state["failures"] += 1
             await asyncio.sleep(1)
