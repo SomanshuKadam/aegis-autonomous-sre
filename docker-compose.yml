@@ -53,6 +53,8 @@ services:
       OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
       OTEL_RESOURCE_ATTRIBUTES: deployment.environment=local,service.version=1.0.0
       AEGIS_MUTATION_CAPABILITY: none
+      AEGIS_ORCHESTRATOR_TOKEN: ${AEGIS_ORCHESTRATOR_TOKEN:?AEGIS_ORCHESTRATOR_TOKEN must be set}
+      AEGIS_OPERATOR_TOKEN: ${AEGIS_OPERATOR_TOKEN:?AEGIS_OPERATOR_TOKEN must be set}
     ports:
       - "8081:8081"
     extra_hosts:
