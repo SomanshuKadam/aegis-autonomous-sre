@@ -29,3 +29,12 @@ class InventoryService:
             self.available[str(reservation["sku"])] += int(reservation["quantity"])
             reservation["state"] = "RELEASED"
         return reservation
+
+    def expire(self) -> int:
+        expired = 0
+        for reservation in self.holds.values():
+            if reservation["state"] == "HELD" and reservation["expires_at"] <= utc_now():
+                self.release(str(reservation["reservation_id"]))
+                reservation["state"] = "EXPIRED"
+                expired += 1
+        return expired

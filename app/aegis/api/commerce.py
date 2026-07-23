@@ -15,6 +15,11 @@ class OrderInput(BaseModel):
     sku: str
     quantity: int = Field(ge=1, le=20)
 
+class ReservationInput(BaseModel):
+    sku: str
+    quantity: int = Field(ge=1, le=20)
+    order_id: str = Field(min_length=1)
+
 @router.get("/products")
 def products(q: str | None = None) -> dict[str, object]: return {"items": [item.model_dump() for item in browse(q)]}
 
@@ -28,6 +33,14 @@ def get_product(sku: str) -> dict[str, object]:
 def create_order(payload: OrderInput, idempotency_key: str = Header(alias="Idempotency-Key")) -> dict[str, object]:
     if not idempotency_key: raise HTTPException(status_code=400, detail="Idempotency-Key is required")
     return orders.create(payload.sku, payload.quantity, idempotency_key)
+
+@router.get("/orders/{order_id}")
+def get_order(order_id: str) -> dict[str, object]:
+    return orders.get(order_id)
+
+@router.post("/reservations", status_code=201)
+def create_reservation(payload: ReservationInput) -> dict[str, object]:
+    return inventory.reserve(payload.sku, payload.quantity, payload.order_id)
 
 @router.post("/orders/process-next")
 def process_next() -> dict[str, object]:

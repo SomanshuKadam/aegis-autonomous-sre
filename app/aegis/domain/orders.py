@@ -23,3 +23,8 @@ class OrderService:
         order = self.orders[str(job["order_id"])]
         self.inventory.commit(str(order["reservation_id"])); order["state"] = "COMPLETED"; job["state"] = "COMPLETED"
         return order
+
+    def get(self, order_id: str) -> dict[str, object]:
+        if order_id not in self.orders:
+            raise KeyError(order_id)
+        return self.orders[order_id]
