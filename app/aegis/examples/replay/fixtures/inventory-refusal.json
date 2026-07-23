@@ -1,0 +1,1 @@
+{"version": 1, "fixture_id": "inventory-refusal", "category": "inventory_dependency", "evidence_types": [], "action_key": "inventory.restore_capacity@1", "risk_score": 99}

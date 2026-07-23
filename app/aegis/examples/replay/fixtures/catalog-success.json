@@ -1,0 +1,1 @@
+{"version": 1, "fixture_id": "catalog-success", "category": "catalog_search", "evidence_types": ["catalog_search"], "action_key": "mongo.create_search_index@1", "risk_score": 1}

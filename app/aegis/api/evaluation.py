@@ -9,6 +9,6 @@ router = APIRouter(prefix="/api/v1/evaluation", tags=["evaluation"])
 
 @router.get("/replays/{fixture_id}", dependencies=[Depends(require_operator)])
 def replay(fixture_id: str) -> dict[str, object]:
-    path = Path("/app/tests/replay/fixtures") / f"{fixture_id}.json"
+    path = Path(__file__).resolve().parents[1] / "examples" / "replay" / "fixtures" / f"{fixture_id}.json"
     if not path.exists(): raise HTTPException(status_code=404, detail="replay fixture not found")
     return evaluate_fixture(load_fixture(path))
