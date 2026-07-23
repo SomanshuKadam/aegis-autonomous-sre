@@ -1,38 +1,54 @@
 {
-  "name": "Aegis - Thin Incident Orchestrator",
+  "id": "aegis-autonomous-lifecycle-v2",
+  "name": "Aegis Autonomous Incident Lifecycle",
   "nodes": [
     {
-      "parameters": {"httpMethod": "POST", "path": "signoz-alert", "responseMode": "onReceived", "options": {}},
-      "id": "alert-webhook", "name": "SigNoz Alert Webhook", "type": "n8n-nodes-base.webhook", "typeVersion": 2, "position": [-800, 0], "webhookId": "aegis-signoz-alert"
+      "parameters": {"httpMethod": "POST", "path": "aegis-lifecycle-alert", "responseMode": "onReceived", "options": {}},
+      "id": "alert-webhook", "name": "SigNoz Alert Webhook", "type": "n8n-nodes-base.webhook", "typeVersion": 2, "position": [-780, 0], "webhookId": "aegis-lifecycle-alert"
     },
     {
-      "parameters": {"jsCode": "const payload = $json.body ?? $json; const alert = Array.isArray(payload.alerts) ? payload.alerts[0] : payload; const fingerprint = alert.fingerprint ?? alert.labels?.fingerprint ?? alert.labels?.alertname; if (!fingerprint) throw new Error('alert fingerprint is required'); return [{json:{source:'signoz', fingerprint:String(fingerprint), category:String(alert.labels?.category ?? payload.category ?? 'catalog_search'), target:{type:String(alert.labels?.target_type ?? payload.target_type ?? 'mongodb_collection')}}}];"},
-      "id": "normalize-alert", "name": "Normalize Alert", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [-560, 0]
+      "parameters": {"jsCode": "const payload = $json.body ?? $json; const alert = Array.isArray(payload.alerts) ? payload.alerts[0] : payload; const labels = alert.labels ?? {}; const fingerprint = alert.fingerprint ?? labels.fingerprint ?? labels.alertname; if (!fingerprint) throw new Error('alert fingerprint is required'); const category = String(labels.category ?? payload.category ?? 'catalog_search'); const target = payload.target ?? {type:String(labels.target_type ?? 'mongodb_collection'), database:String(labels.database ?? 'mydatabase'), collection:String(labels.collection ?? 'products'), field:String(labels.field ?? 'search_text')}; const traceId = alert.trace_id ?? alert.annotations?.trace_id ?? labels.trace_id ?? payload.trace_id; return [{json:{source:'signoz', fingerprint:String(fingerprint), category, target, trace_id: typeof traceId === 'string' && /^[0-9a-f]{32}$/.test(traceId) ? traceId : undefined}}];"},
+      "id": "normalize-alert", "name": "Normalize Correlated Alert", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [-540, 0]
     },
     {
-      "parameters": {"method": "POST", "url": "={{ $env.AEGIS_API_URL + '/api/v1/orchestration/alerts' }}", "sendHeaders": true, "headerParameters": {"parameters": [{"name": "Authorization", "value": "=Bearer {{ $env.AEGIS_ORCHESTRATOR_TOKEN }}"}]}, "sendBody": true, "specifyBody": "json", "jsonBody": "={{ $json }}", "options": {"retry": {"maxTries": 3}}},
-      "id": "register-alert", "name": "Register Alert", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [-320, 0]
+      "parameters": {"method": "POST", "url": "={{ $env.AEGIS_API_URL + '/api/v1/orchestration/alerts' }}", "sendHeaders": true, "headerParameters": {"parameters": [{"name": "Authorization", "value": "={{ 'Bearer ' + $env.AEGIS_ORCHESTRATOR_TOKEN }}"}]}, "sendBody": true, "specifyBody": "json", "jsonBody": "={{ $json }}", "options": {"retry": {"maxTries": 3}}},
+      "id": "register-alert", "name": "Register Deduplicated Alert", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [-280, 0]
     },
     {
-      "parameters": {"method": "POST", "url": "={{ $env.AEGIS_API_URL + '/api/v1/orchestration/notifications' }}", "sendBody": true, "specifyBody": "json", "jsonBody": "={{ {incident_id: $json.incident_id, channel: 'n8n', delivered: true} }}", "options": {"retry": {"maxTries": 3}}},
-      "id": "record-alert-notification", "name": "Record Alert Notification", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [-80, -80]
+      "parameters": {"method": "POST", "url": "={{ $env.AEGIS_API_URL + '/api/v1/orchestration/incidents/' + $json.incident_id + '/process' }}", "sendHeaders": true, "headerParameters": {"parameters": [{"name": "Authorization", "value": "={{ 'Bearer ' + $env.AEGIS_ORCHESTRATOR_TOKEN }}"}]}, "options": {"retry": {"maxTries": 3}}},
+      "id": "process-incident", "name": "Process Incident Lifecycle", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [-20, 0]
+    },
+    {
+      "parameters": {"method": "POST", "url": "={{ $env.SLACK_WEBHOOK_URL }}", "sendBody": true, "specifyBody": "json", "jsonBody": "={{ {text: 'Aegis incident ' + $json.incident_id + ' reached ' + $json.state + ' (' + $json.outcome + '). Open http://localhost:3000/ops/incidents/' + $json.incident_id} }}", "options": {"retry": {"maxTries": 3}}},
+      "id": "send-slack", "name": "Deliver Slack Lifecycle Update", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [240, 0], "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {"jsCode": "const outcome = $('Process Incident Lifecycle').first().json; const slackConfigured = Boolean($env.SLACK_WEBHOOK_URL); const failed = Boolean($json.error); return [{json:{incident_id:outcome.incident_id, channel:'slack', delivered:slackConfigured && !failed, detail: failed ? String($json.error.message ?? $json.error) : (slackConfigured ? 'n8n Slack lifecycle update delivered' : 'SLACK_WEBHOOK_URL is not configured')}}];"},
+      "id": "notification-outcome", "name": "Classify Notification Outcome", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [500, 0]
+    },
+    {
+      "parameters": {"method": "POST", "url": "={{ $env.AEGIS_API_URL + '/api/v1/orchestration/notifications' }}", "sendHeaders": true, "headerParameters": {"parameters": [{"name": "Authorization", "value": "={{ 'Bearer ' + $env.AEGIS_ORCHESTRATOR_TOKEN }}"}]}, "sendBody": true, "specifyBody": "json", "jsonBody": "={{ $json }}", "options": {"retry": {"maxTries": 3}}},
+      "id": "record-notification", "name": "Record Independent Notification Outcome", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [760, 0]
     },
     {
       "parameters": {"httpMethod": "POST", "path": "approval-resume", "responseMode": "lastNode", "options": {}},
-      "id": "approval-webhook", "name": "Approval Resume Webhook", "type": "n8n-nodes-base.webhook", "typeVersion": 2, "position": [-320, 180], "webhookId": "aegis-approval-resume"
+      "id": "approval-webhook", "name": "Approval Resume Webhook", "type": "n8n-nodes-base.webhook", "typeVersion": 2, "position": [-20, 220], "webhookId": "aegis-approval-resume"
     },
     {
-      "parameters": {"method": "POST", "url": "={{ $env.AEGIS_API_URL + '/api/v1/orchestration/notifications' }}", "sendBody": true, "specifyBody": "json", "jsonBody": "={{ {incident_id: $json.body.incident_id, channel: 'approval-resume', delivered: true} }}", "options": {"retry": {"maxTries": 3}}},
-      "id": "record-approval-resume", "name": "Record Approval Resume", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [-80, 180]
+      "parameters": {"method": "POST", "url": "={{ $env.AEGIS_API_URL + '/api/v1/orchestration/notifications' }}", "sendHeaders": true, "headerParameters": {"parameters": [{"name": "Authorization", "value": "={{ 'Bearer ' + $env.AEGIS_ORCHESTRATOR_TOKEN }}"}]}, "sendBody": true, "specifyBody": "json", "jsonBody": "={{ {incident_id: $json.body.incident_id, channel:'approval-resume', delivered:true, detail:'n8n received an approval resume request'} }}", "options": {"retry": {"maxTries": 3}}},
+      "id": "record-approval-resume", "name": "Record Approval Resume", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [250, 220]
     }
   ],
   "connections": {
-    "SigNoz Alert Webhook": {"main": [[{"node": "Normalize Alert", "type": "main", "index": 0}]]},
-    "Normalize Alert": {"main": [[{"node": "Register Alert", "type": "main", "index": 0}]]},
-    "Register Alert": {"main": [[{"node": "Record Alert Notification", "type": "main", "index": 0}]]},
+    "SigNoz Alert Webhook": {"main": [[{"node": "Normalize Correlated Alert", "type": "main", "index": 0}]]},
+    "Normalize Correlated Alert": {"main": [[{"node": "Register Deduplicated Alert", "type": "main", "index": 0}]]},
+    "Register Deduplicated Alert": {"main": [[{"node": "Process Incident Lifecycle", "type": "main", "index": 0}]]},
+    "Process Incident Lifecycle": {"main": [[{"node": "Deliver Slack Lifecycle Update", "type": "main", "index": 0}]]},
+    "Deliver Slack Lifecycle Update": {"main": [[{"node": "Classify Notification Outcome", "type": "main", "index": 0}]]},
+    "Classify Notification Outcome": {"main": [[{"node": "Record Independent Notification Outcome", "type": "main", "index": 0}]]},
     "Approval Resume Webhook": {"main": [[{"node": "Record Approval Resume", "type": "main", "index": 0}]]}
   },
-  "active": false,
+  "active": true,
   "settings": {"executionOrder": "v1"},
-  "versionId": "aegis-thin-orchestrator-v1"
+  "versionId": "aegis-autonomous-lifecycle-v2"
 }

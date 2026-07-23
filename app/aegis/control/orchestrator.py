@@ -128,10 +128,10 @@ class IncidentOrchestrator:
             response.raise_for_status()
             result = response.json()
         except httpx.HTTPError as exc:
-            self.incidents.record("executions", incident_id, {"execution_id": execution_id, "proposal_id": proposal["proposal_id"], "state": "FAILED", "attempt_number": 1, "error": str(exc)})
+            self.incidents.record("executions", incident_id, {"execution_id": execution_id, "idempotency_key": execution_id, "proposal_id": proposal["proposal_id"], "state": "FAILED", "attempt_number": 1, "error": str(exc)})
             failed = self._advance_to(incident_id, IncidentState.FAILED, "Action runner did not complete the approved action")
             return OrchestrationResult(failed, "FAILED", "inspect runner execution")
-        self.incidents.record("executions", incident_id, {"execution_id": execution_id, "proposal_id": proposal["proposal_id"], "state": str(result.get("state", "SUCCEEDED")), "attempt_number": 1, "runner_result": result})
+        self.incidents.record("executions", incident_id, {"execution_id": execution_id, "idempotency_key": execution_id, "proposal_id": proposal["proposal_id"], "state": str(result.get("state", "SUCCEEDED")), "attempt_number": 1, "runner_result": result})
         self._advance_to(incident_id, IncidentState.VERIFYING, "Verify the intended state and a fresh business result")
         observed = self._verification_observation(proposal)
         verification = verify_profile("catalog_search", {"index_present": True, "business_result": True}, observed, bool(observed.get("business_result")), True)
