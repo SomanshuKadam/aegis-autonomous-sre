@@ -6,3 +6,5 @@ class RollbackGuard:
         if execution_id in self.completed: raise ValueError("rollback was already attempted")
         self.completed.add(execution_id)
         return {"outcome": "ROLLED_BACK", "restored": previous_state}
+    def escalate(self, execution_id: str, reason: str) -> dict[str, object]:
+        return {"outcome": "ESCALATED", "execution_id": execution_id, "reason": reason}

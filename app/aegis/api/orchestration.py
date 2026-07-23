@@ -7,11 +7,16 @@ from aegis.control.approvals import ApprovalStore
 from aegis.control.policy import evaluate
 from aegis.control.runner import RestrictedRunner
 from aegis.control.incidents import IncidentStore
+from aegis.control.verification import verify_profile
+from aegis.control.rollback import RollbackGuard
+from aegis.control.notifications import NotificationRecorder
 
 router = APIRouter(prefix="/api/v1/orchestration", tags=["orchestration"])
 approvals = ApprovalStore()
 runner = RestrictedRunner()
 incidents = IncidentStore()
+rollback_guard = RollbackGuard()
+notifications = NotificationRecorder()
 
 class AlertInput(BaseModel):
     source: str = Field(min_length=1)
@@ -54,4 +59,18 @@ def request_approval(payload: dict = Body(...)) -> dict[str, object]:
 @router.post("/execute", dependencies=[Depends(require_operator)])
 def execute(payload: dict = Body(...)) -> dict[str, object]:
     approvals.consume(str(payload["approval_id"]), payload["proposal"])
-    return runner.execute(payload["proposal"])
+    return runner.execute(payload["proposal"], payload.get("current_state"))
+
+@router.post("/verify", dependencies=[Depends(require_operator)])
+def verify_execution(payload: dict = Body(...)) -> dict[str, object]:
+    return verify_profile(str(payload.get("profile", "exact_state")), payload.get("expected", {}), payload.get("observed", {}), bool(payload.get("fresh_business_result")), bool(payload.get("regression_free")))
+
+@router.post("/rollback", dependencies=[Depends(require_operator)])
+def rollback_execution(payload: dict = Body(...)) -> dict[str, object]:
+    if payload.get("safe", True):
+        return rollback_guard.compensate(str(payload["execution_id"]), payload.get("previous_state", {}))
+    return rollback_guard.escalate(str(payload["execution_id"]), "rollback is not safe")
+
+@router.post("/notifications")
+def record_notification(payload: dict = Body(...)) -> dict[str, object]:
+    return notifications.record(str(payload["incident_id"]), str(payload.get("channel", "console")), bool(payload.get("delivered")))
