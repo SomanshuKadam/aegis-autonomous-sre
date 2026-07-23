@@ -7,7 +7,7 @@
       "id": "alert-webhook", "name": "SigNoz Alert Webhook", "type": "n8n-nodes-base.webhook", "typeVersion": 2, "position": [-780, 0], "webhookId": "aegis-lifecycle-alert"
     },
     {
-      "parameters": {"jsCode": "const payload = $json.body ?? $json; const alert = Array.isArray(payload.alerts) ? payload.alerts[0] : payload; const labels = alert.labels ?? {}; const fingerprint = alert.fingerprint ?? labels.fingerprint ?? labels.alertname; if (!fingerprint) throw new Error('alert fingerprint is required'); const category = String(labels.category ?? payload.category ?? 'catalog_search'); const target = payload.target ?? {type:String(labels.target_type ?? 'mongodb_collection'), database:String(labels.database ?? 'mydatabase'), collection:String(labels.collection ?? 'products'), field:String(labels.field ?? 'search_text')}; const traceId = alert.trace_id ?? alert.annotations?.trace_id ?? labels.trace_id ?? payload.trace_id; return [{json:{source:'signoz', fingerprint:String(fingerprint), category, target, trace_id: typeof traceId === 'string' && /^[0-9a-f]{32}$/.test(traceId) ? traceId : undefined}}];"},
+      "parameters": {"jsCode": "const payload = $json.body ?? $json; const alert = Array.isArray(payload.alerts) ? payload.alerts[0] : payload; const labels = alert.labels ?? {}; const fingerprint = alert.fingerprint ?? labels.fingerprint ?? labels.alertname; if (!fingerprint) throw new Error('alert fingerprint is required'); const category = String(labels.category ?? payload.category ?? 'catalog_search'); const targets = {catalog_search:{type:'mongodb_collection', database:'mydatabase', collection:'products', field:'search_text'}, inventory_dependency:{type:'inventory_dependency'}, order_backlog:{type:'order_worker'}}; if (!Object.hasOwn(targets, category)) throw new Error('unsupported incident category'); const target = payload.target ?? targets[category]; if (target.type !== targets[category].type) throw new Error('alert target does not match category'); const traceId = alert.trace_id ?? alert.annotations?.trace_id ?? labels.trace_id ?? payload.trace_id; return [{json:{source:'signoz', fingerprint:String(fingerprint), category, target, trace_id: typeof traceId === 'string' && /^[0-9a-f]{32}$/.test(traceId) ? traceId : undefined}}];"},
       "id": "normalize-alert", "name": "Normalize Correlated Alert", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [-540, 0]
     },
     {
@@ -23,7 +23,7 @@
       "id": "send-slack", "name": "Deliver Slack Lifecycle Update", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [240, 0], "onError": "continueRegularOutput"
     },
     {
-      "parameters": {"jsCode": "const outcome = $('Process Incident Lifecycle').first().json; const slackConfigured = Boolean($env.SLACK_WEBHOOK_URL); const failed = Boolean($json.error); return [{json:{incident_id:outcome.incident_id, channel:'slack', delivered:slackConfigured && !failed, detail: failed ? String($json.error.message ?? $json.error) : (slackConfigured ? 'n8n Slack lifecycle update delivered' : 'SLACK_WEBHOOK_URL is not configured')}}];"},
+      "parameters": {"jsCode": "let outcome; try { outcome = $('Process Incident Lifecycle').first().json; } catch (_) { outcome = $('Resume Approved Incident').first().json; } const slackConfigured = Boolean($env.SLACK_WEBHOOK_URL); const failed = Boolean($json.error); return [{json:{incident_id:outcome.incident_id, channel:'slack', delivered:slackConfigured && !failed, detail: failed ? String($json.error.message ?? $json.error) : (slackConfigured ? 'n8n Slack lifecycle update delivered' : 'SLACK_WEBHOOK_URL is not configured')}}];"},
       "id": "notification-outcome", "name": "Classify Notification Outcome", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [500, 0]
     },
     {
@@ -46,7 +46,8 @@
     "Process Incident Lifecycle": {"main": [[{"node": "Deliver Slack Lifecycle Update", "type": "main", "index": 0}]]},
     "Deliver Slack Lifecycle Update": {"main": [[{"node": "Classify Notification Outcome", "type": "main", "index": 0}]]},
     "Classify Notification Outcome": {"main": [[{"node": "Record Independent Notification Outcome", "type": "main", "index": 0}]]},
-    "Approval Resume Webhook": {"main": [[{"node": "Resume Approved Incident", "type": "main", "index": 0}]]}
+    "Approval Resume Webhook": {"main": [[{"node": "Resume Approved Incident", "type": "main", "index": 0}]]},
+    "Resume Approved Incident": {"main": [[{"node": "Deliver Slack Lifecycle Update", "type": "main", "index": 0}]]}
   },
   "active": true,
   "settings": {"executionOrder": "v1"},
