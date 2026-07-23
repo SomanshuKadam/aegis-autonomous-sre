@@ -14,7 +14,7 @@ class ReservationRequest(BaseModel):
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
+def health() -> dict[str, object]:
     return {"status": "ok" if capacity["healthy"] else "degraded", "service": "aegis-inventory", "capacity": capacity["desired"]}
 
 @app.post("/reservations")
