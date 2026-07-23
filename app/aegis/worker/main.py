@@ -5,9 +5,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Header, HTTPException
 from aegis.config import get_settings
 from aegis.domain.commerce_store import CommerceStore
+from aegis.control.service_state import ServiceState
 
 state = {"processed": 0, "failures": 0, "running": True}
-capacity = {"desired": 1, "previous": 1, "maximum": 4}
+capacity = ServiceState("worker", {"desired": 1, "previous": 1, "maximum": 4})
 commerce = CommerceStore()
 
 async def consume() -> None:
@@ -34,11 +35,12 @@ app = FastAPI(title="Aegis Order Worker", lifespan=lifespan)
 @app.get("/health")
 def health() -> dict[str, object]:
     queue = commerce.queue_health()
-    return {"status": "ok", "service": "aegis-worker", **state, **queue, "capacity": capacity["desired"], "maximum": capacity["maximum"], "resource_headroom": capacity["desired"] < capacity["maximum"]}
+    current = capacity.read()
+    return {"status": "ok", "service": "aegis-worker", **state, **queue, "capacity": current["desired"], "maximum": current["maximum"], "resource_headroom": current["desired"] < current["maximum"]}
 
 @app.post("/control/capacity")
 def set_capacity(desired: int, authorization: str | None = Header(default=None)) -> dict[str, object]:
     if authorization != f"Bearer {get_settings().runner_token.get_secret_value()}": raise HTTPException(status_code=401, detail="invalid runner credentials")
-    if not capacity["desired"] < desired <= capacity["maximum"]: raise HTTPException(status_code=422, detail="worker capacity must increase within the approved range")
-    capacity["previous"] = capacity["desired"]; capacity["desired"] = desired
-    return {**capacity, "state": "SUCCEEDED"}
+    current = capacity.read()
+    if not current["desired"] < desired <= current["maximum"]: raise HTTPException(status_code=422, detail="worker capacity must increase within the approved range")
+    return {**capacity.update_capacity(desired), "state": "SUCCEEDED"}
