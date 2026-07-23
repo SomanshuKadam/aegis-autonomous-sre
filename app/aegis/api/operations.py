@@ -17,7 +17,7 @@ def create_router(store: object) -> APIRouter:
     def incident_detail(incident_id: str, request: Request) -> dict[str, object]:
         try: incident = store.get(incident_id)
         except KeyError: raise HTTPException(status_code=404, detail="incident not found")
-        trace_id = request.query_params.get("trace_id")
+        trace_id = request.query_params.get("trace_id") or str(incident.get("trace_id") or "")
         incident["signoz"] = context_links(trace_id, "aegis-api") if trace_id else {"trace": {"url": None, "reason": "trace correlation unavailable"}}
         return {**incident, **store.records(incident_id)}
     return router

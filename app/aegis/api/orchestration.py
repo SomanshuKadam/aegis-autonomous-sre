@@ -17,7 +17,7 @@ approvals = ApprovalStore()
 runner = RestrictedRunner()
 incidents = IncidentStore()
 rollback_guard = RollbackGuard()
-notifications = NotificationRecorder()
+notifications = NotificationRecorder(incidents)
 orchestrator = IncidentOrchestrator(incidents)
 
 class AlertInput(BaseModel):
@@ -83,6 +83,6 @@ def rollback_execution(payload: dict = Body(...)) -> dict[str, object]:
         return rollback_guard.compensate(str(payload["execution_id"]), payload.get("previous_state", {}))
     return rollback_guard.escalate(str(payload["execution_id"]), "rollback is not safe")
 
-@router.post("/notifications")
+@router.post("/notifications", dependencies=[Depends(require_orchestrator)])
 def record_notification(payload: dict = Body(...)) -> dict[str, object]:
-    return notifications.record(str(payload["incident_id"]), str(payload.get("channel", "console")), bool(payload.get("delivered")))
+    return notifications.record(str(payload["incident_id"]), str(payload.get("channel", "console")), bool(payload.get("delivered")), str(payload.get("detail", "")))
