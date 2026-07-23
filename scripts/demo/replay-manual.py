@@ -6,8 +6,10 @@ import httpx
 
 def main() -> None:
     headers = {"Authorization": f"Bearer {os.environ['AEGIS_OPERATOR_TOKEN']}"}
-    fixture_dir = Path("/work")
+    fixture_dir = Path("/app/aegis/examples/replay/fixtures")
     fixture_ids = [path.stem for path in fixture_dir.glob("*.json")]
+    if not fixture_ids:
+        raise RuntimeError("no replay fixtures are available in the API container")
     with httpx.Client(timeout=15) as client:
         for fixture_id in fixture_ids:
             response = client.get(f"http://api:8081/api/v1/evaluation/replays/{fixture_id}", headers=headers)
