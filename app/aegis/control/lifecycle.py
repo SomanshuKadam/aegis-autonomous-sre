@@ -15,3 +15,16 @@ class IncidentLifecycle:
         incident["timeline_sequence"] = sequence
         incident.setdefault("timeline", []).append(event(str(incident["incident_id"]), sequence, target.value, "technical", "advanced", actor))
         return incident
+
+    def progress(self, incident: dict[str, object], actor: str = "orchestrator") -> dict[str, object]:
+        """Advance one deterministic stage until an external decision is required."""
+        current = IncidentState(str(incident["state"]))
+        next_state = {
+            IncidentState.DETECTED: IncidentState.VALIDATING,
+            IncidentState.VALIDATING: IncidentState.ENRICHING,
+            IncidentState.ENRICHING: IncidentState.INVESTIGATING,
+            IncidentState.INVESTIGATING: IncidentState.ROOT_CAUSE_IDENTIFIED,
+            IncidentState.ROOT_CAUSE_IDENTIFIED: IncidentState.ACTION_PROPOSED,
+            IncidentState.ACTION_PROPOSED: IncidentState.POLICY_CHECKED,
+        }.get(current)
+        return self.advance(incident, next_state, actor) if next_state else incident
