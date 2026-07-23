@@ -66,6 +66,98 @@ services:
       retries: 20
     networks: [aegis]
 
+  inventory:
+    build:
+      context: ./app
+    command: ["uvicorn", "aegis.inventory.main:app", "--host", "0.0.0.0", "--port", "8082"]
+    restart: unless-stopped
+    environment:
+      MONGODB_URI: mongodb://${MONGO_ROOT_USERNAME:-aegisadmin}:${MONGO_ROOT_PASSWORD:?MONGO_ROOT_PASSWORD must be set}@mongodb:27017/${MONGO_DATABASE:-mydatabase}?authSource=admin
+      MONGO_DATABASE: ${MONGO_DATABASE:-mydatabase}
+      OTEL_SERVICE_NAME: aegis-inventory
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, curl, -fsS, http://localhost:8082/health]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [aegis]
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  worker:
+    build:
+      context: ./app
+    command: ["uvicorn", "aegis.worker.main:app", "--host", "0.0.0.0", "--port", "8083"]
+    restart: unless-stopped
+    environment:
+      MONGODB_URI: mongodb://${MONGO_ROOT_USERNAME:-aegisadmin}:${MONGO_ROOT_PASSWORD:?MONGO_ROOT_PASSWORD must be set}@mongodb:27017/${MONGO_DATABASE:-mydatabase}?authSource=admin
+      MONGO_DATABASE: ${MONGO_DATABASE:-mydatabase}
+      OTEL_SERVICE_NAME: aegis-worker
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, curl, -fsS, http://localhost:8083/health]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [aegis]
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  workload:
+    build:
+      context: ./app
+    command: ["uvicorn", "aegis.workload.main:app", "--host", "0.0.0.0", "--port", "8084"]
+    restart: unless-stopped
+    environment:
+      MONGODB_URI: mongodb://${MONGO_ROOT_USERNAME:-aegisadmin}:${MONGO_ROOT_PASSWORD:?MONGO_ROOT_PASSWORD must be set}@mongodb:27017/${MONGO_DATABASE:-mydatabase}?authSource=admin
+      MONGO_DATABASE: ${MONGO_DATABASE:-mydatabase}
+      OTEL_SERVICE_NAME: aegis-workload
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, curl, -fsS, http://localhost:8084/health]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [aegis]
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  action-runner:
+    build:
+      context: ./app
+    command: ["uvicorn", "aegis.runner.main:app", "--host", "0.0.0.0", "--port", "8085"]
+    restart: unless-stopped
+    environment:
+      MONGODB_URI: mongodb://${MONGO_ROOT_USERNAME:-aegisadmin}:${MONGO_ROOT_PASSWORD:?MONGO_ROOT_PASSWORD must be set}@mongodb:27017/${MONGO_DATABASE:-mydatabase}?authSource=admin
+      MONGO_DATABASE: ${MONGO_DATABASE:-mydatabase}
+      OTEL_SERVICE_NAME: aegis-action-runner
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, curl, -fsS, http://localhost:8085/health]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [aegis]
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
   frontend:
     build:
       context: ./frontend
