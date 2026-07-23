@@ -10,6 +10,7 @@ from aegis.control.incidents import IncidentStore
 from aegis.control.verification import verify_profile
 from aegis.control.rollback import RollbackGuard
 from aegis.control.notifications import NotificationRecorder
+from aegis.control.orchestrator import IncidentOrchestrator
 
 router = APIRouter(prefix="/api/v1/orchestration", tags=["orchestration"])
 approvals = ApprovalStore()
@@ -17,6 +18,7 @@ runner = RestrictedRunner()
 incidents = IncidentStore()
 rollback_guard = RollbackGuard()
 notifications = NotificationRecorder()
+orchestrator = IncidentOrchestrator(incidents)
 
 class AlertInput(BaseModel):
     source: str = Field(min_length=1)
@@ -34,6 +36,11 @@ def ingest_alert(payload: AlertInput) -> dict[str, object]:
     from aegis.control.idempotency import dedup_key
     incident = incidents.create(payload.category, dedup_key(payload.source, payload.fingerprint, payload.category, payload.target), source=payload.source, fingerprint=payload.fingerprint, target=payload.target, trace_id=payload.trace_id)
     return {"disposition": "accepted", "incident_id": incident["incident_id"], "deduplicated": int(incident.get("alert_count", 1)) > 1}
+
+@router.post("/incidents/{incident_id}/process", dependencies=[Depends(require_orchestrator)])
+def process_incident(incident_id: str) -> dict[str, object]:
+    result = orchestrator.process(incident_id)
+    return {"incident_id": result.incident["incident_id"], "state": result.incident["state"], "outcome": result.outcome, "next_step": result.next_step}
 
 @router.post("/incidents")
 def create_incident(payload: dict = Body(...)) -> dict[str, object]:
