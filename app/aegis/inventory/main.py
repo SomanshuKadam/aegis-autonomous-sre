@@ -31,7 +31,7 @@ def commit(reservation_id: str) -> dict[str, object]:
     return inventory.commit(reservation_id)
 
 @app.post("/control/capacity")
-def set_capacity(desired: int, authorization: str | None = Header(default=None)) -> dict[str, object]:
+def set_capacity(desired: int, authorization: str | None = Header(default=None), x_aegis_rollback: str | None = Header(default=None)) -> dict[str, object]:
     if authorization != f"Bearer {get_settings().runner_token.get_secret_value()}": raise HTTPException(status_code=401, detail="invalid runner credentials")
     if not 1 <= desired <= 4: raise HTTPException(status_code=422, detail="capacity is outside the approved range")
-    return {**capacity.update_capacity(desired), "state": "SUCCEEDED"}
+    return {**capacity.update_capacity(desired), "state": "SUCCEEDED", "rollback": x_aegis_rollback == "true"}

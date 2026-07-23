@@ -39,8 +39,10 @@ def health() -> dict[str, object]:
     return {"status": "ok", "service": "aegis-worker", **state, **queue, "capacity": current["desired"], "maximum": current["maximum"], "resource_headroom": current["desired"] < current["maximum"]}
 
 @app.post("/control/capacity")
-def set_capacity(desired: int, authorization: str | None = Header(default=None)) -> dict[str, object]:
+def set_capacity(desired: int, authorization: str | None = Header(default=None), x_aegis_rollback: str | None = Header(default=None)) -> dict[str, object]:
     if authorization != f"Bearer {get_settings().runner_token.get_secret_value()}": raise HTTPException(status_code=401, detail="invalid runner credentials")
     current = capacity.read()
-    if not current["desired"] < desired <= current["maximum"]: raise HTTPException(status_code=422, detail="worker capacity must increase within the approved range")
-    return {**capacity.update_capacity(desired), "state": "SUCCEEDED"}
+    rollback = x_aegis_rollback == "true"
+    allowed = 1 <= desired <= current["maximum"] if rollback else current["desired"] < desired <= current["maximum"]
+    if not allowed: raise HTTPException(status_code=422, detail="worker capacity is outside the registered action bounds")
+    return {**capacity.update_capacity(desired), "state": "SUCCEEDED", "rollback": rollback}

@@ -29,10 +29,7 @@ class OrchestrationResult:
 
 
 class IncidentOrchestrator:
-    """Coordinates only read-only investigation and deterministic policy decisions.
-
-    Mutating execution remains a separate action-runner concern.
-    """
+    """Owns the durable incident lifecycle while the runner owns bounded mutation."""
 
     def __init__(self, incidents: IncidentStore, settings: Settings | None = None) -> None:
         self.incidents = incidents
@@ -146,30 +143,57 @@ class IncidentOrchestrator:
     def _dispatch_and_verify(self, incident_id: str, proposal: dict[str, object]) -> OrchestrationResult:
         self._advance_to(incident_id, IncidentState.EXECUTING, "Dispatch approved action to the isolated runner")
         execution_id = new_id()
+        idempotency_key = canonical_hash({"incident_id": incident_id, "proposal_id": proposal["proposal_id"], "evidence_version": proposal["evidence_version"]})
+        runner_proposal = {**proposal, "idempotency_key": idempotency_key}
         try:
             response = httpx.post(
                 f"{self.settings.runner_url.rstrip('/')}/actions/execute",
                 headers={"Authorization": f"Bearer {self.settings.runner_token.get_secret_value()}"},
-                json={"proposal": jsonable_encoder(proposal)},
+                json={"proposal": jsonable_encoder(runner_proposal)},
                 timeout=65,
             )
             response.raise_for_status()
             result = response.json()
         except httpx.HTTPError as exc:
-            self.incidents.record("executions", incident_id, {"execution_id": execution_id, "idempotency_key": execution_id, "proposal_id": proposal["proposal_id"], "state": "FAILED", "attempt_number": 1, "error": str(exc)})
-            failed = self._advance_to(incident_id, IncidentState.FAILED, "Action runner did not complete the approved action")
-            return OrchestrationResult(failed, "FAILED", "inspect runner execution")
-        self.incidents.record("executions", incident_id, {"execution_id": execution_id, "idempotency_key": execution_id, "proposal_id": proposal["proposal_id"], "state": str(result.get("state", "SUCCEEDED")), "attempt_number": 1, "runner_result": result})
+            self.incidents.record("executions", incident_id, {"execution_id": execution_id, "idempotency_key": idempotency_key, "proposal_id": proposal["proposal_id"], "state": "FAILED", "attempt_number": 1, "error": str(exc)})
+            return self._rollback_or_escalate(incident_id, execution_id, proposal, {}, "action runner did not complete the approved action")
+        execution = {"execution_id": execution_id, "idempotency_key": idempotency_key, "proposal_id": proposal["proposal_id"], "state": str(result.get("state", "SUCCEEDED")), "attempt_number": 1, "runner_result": result, "previous_state": result.get("previous_state", {})}
+        self.incidents.record("executions", incident_id, execution)
+        if execution["state"] not in {"SUCCEEDED", "NOOP", "DUPLICATE"}:
+            return self._rollback_or_escalate(incident_id, execution_id, proposal, dict(execution["previous_state"]), "runner reported a non-successful action outcome")
         self._advance_to(incident_id, IncidentState.VERIFYING, "Verify the intended state and a fresh business result")
         observed = self._verification_observation(proposal)
         expected = self._verification_expectation(proposal)
         verification = verify_profile(str(resolve(str(proposal["action_key"])).verification_profile), expected, observed, bool(observed.get("business_result")), True)
         self.incidents.record("verifications", incident_id, {"verification_id": new_id(), "execution_id": execution_id, **verification, "observed": observed})
         if verification["outcome"] == "VERIFIED":
-            resolved = self._advance_to(incident_id, IncidentState.RESOLVED, "Runner mutation and fresh catalog query were verified")
+            resolved = self._advance_to(incident_id, IncidentState.RESOLVED, "Registered action and fresh business behavior were verified")
             return OrchestrationResult(resolved, "RESOLVED", "notify operations")
-        failed = self._advance_to(incident_id, IncidentState.FAILED, "Runner mutation could not be verified")
-        return OrchestrationResult(failed, "FAILED", "inspect verification evidence")
+        return self._rollback_or_escalate(incident_id, execution_id, proposal, dict(execution["previous_state"]), "post-action verification did not satisfy the frozen criteria")
+
+    def _rollback_or_escalate(self, incident_id: str, execution_id: str, proposal: dict[str, object], previous_state: dict[str, object], reason: str) -> OrchestrationResult:
+        action = resolve(str(proposal["action_key"]))
+        rollback_id = new_id()
+        if not action.rollback_action or not previous_state:
+            self.incidents.record("rollbacks", incident_id, {"rollback_id": rollback_id, "execution_id": execution_id, "outcome": "ESCALATED", "reason": reason, "attempt_number": 0})
+            escalated = self._advance_to(incident_id, IncidentState.ESCALATED, f"{reason}; no safe compensating action is available")
+            return OrchestrationResult(escalated, "ESCALATED", "operator investigation required")
+        try:
+            response = httpx.post(
+                f"{self.settings.runner_url.rstrip('/')}/actions/rollback",
+                headers={"Authorization": f"Bearer {self.settings.runner_token.get_secret_value()}"},
+                json={"action_key": proposal["action_key"], "target": proposal["target"], "previous_state": previous_state},
+                timeout=65,
+            )
+            response.raise_for_status()
+            outcome = response.json()
+        except httpx.HTTPError as exc:
+            self.incidents.record("rollbacks", incident_id, {"rollback_id": rollback_id, "execution_id": execution_id, "outcome": "ESCALATED", "reason": reason, "attempt_number": 1, "error": str(exc)})
+            escalated = self._advance_to(incident_id, IncidentState.ESCALATED, f"{reason}; the one allowed rollback failed")
+            return OrchestrationResult(escalated, "ESCALATED", "operator investigation required")
+        self.incidents.record("rollbacks", incident_id, {"rollback_id": rollback_id, "execution_id": execution_id, "outcome": "ROLLED_BACK", "reason": reason, "attempt_number": 1, "previous_state": previous_state, "runner_result": outcome})
+        rolled_back = self._advance_to(incident_id, IncidentState.ROLLED_BACK, f"{reason}; one registered compensation restored the previous state")
+        return OrchestrationResult(rolled_back, "ROLLED_BACK", "operator review required")
 
     def _verification_observation(self, proposal: dict[str, object]) -> dict[str, object]:
         if proposal["action_key"] == "mongo.create_search_index@1":

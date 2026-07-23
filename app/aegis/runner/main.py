@@ -17,6 +17,20 @@ def execute(payload: ActionRequest, authorization: str | None = Header(default=N
     return executor.execute(payload.proposal)
 
 
+class RollbackRequest(BaseModel):
+    action_key: str
+    target: dict[str, object]
+    previous_state: dict[str, object]
+
+
+@app.post("/actions/rollback")
+def rollback(payload: RollbackRequest, authorization: str | None = Header(default=None)) -> dict[str, object]:
+    token = authorization.removeprefix("Bearer ") if authorization else ""
+    if token != get_settings().runner_token.get_secret_value():
+        raise HTTPException(status_code=401, detail="invalid runner credentials")
+    return executor.rollback(payload.action_key, payload.target, payload.previous_state)
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "aegis-runner"}
