@@ -18,7 +18,7 @@ class ActionDefinition:
 ACTIONS = {
     "mongo.create_search_index@1": ActionDefinition("mongo.create_search_index", 1, "LOW", "mongodb_collection", ("catalog_search",), 60, (), "catalog_search", None),
     "inventory.restore_capacity@1": ActionDefinition("inventory.restore_capacity", 1, "MEDIUM", "inventory_dependency", ("inventory_health",), 60, ("desired",), "inventory", "inventory.restore_capacity@1"),
-    "worker.set_capacity@1": ActionDefinition("worker.set_capacity", 1, "MEDIUM", "order_worker", ("queue_backlog",), 60, ("desired",), "backlog", "worker.set_capacity@1"),
+    "worker.set_capacity@1": ActionDefinition("worker.set_capacity", 1, "LOW", "order_worker", ("queue_backlog",), 60, ("desired",), "backlog", "worker.set_capacity@1"),
 }
 
 def resolve(key: str) -> ActionDefinition:
