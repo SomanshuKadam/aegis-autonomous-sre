@@ -63,6 +63,27 @@ docker compose exec -T n8n n8n import:workflow --input=/opt/aegis/workflows/aegi
 docker compose exec -T n8n n8n publish:workflow --id=aegis-autonomous-lifecycle-v2
 ```
 
+## Run the self-healing workflow
+
+The commerce application is only the observable workload. The Aegis product is the incident
+workflow: a correlated signal enters n8n, Slack receives the trigger, Codex investigates the
+source trace through read-only SigNoz access, deterministic policy checks the proposed registered
+action, the isolated runner applies it, and a fresh verification result is reported to Slack.
+
+From WSL, create one real local condition and submit its correlated signal to the active n8n
+webhook:
+
+```bash
+./scripts/demo/simulate-self-healing.sh catalog
+./scripts/demo/simulate-self-healing.sh inventory
+./scripts/demo/simulate-self-healing.sh backlog
+```
+
+Use `catalog` for the shortest automatic end-to-end demonstration. `inventory` intentionally
+stops at explicit approval because its registered action is medium risk. The script prints the
+source trace and Aegis incident URL; Slack shows detection, Codex diagnosis, the bounded action,
+and the verified outcome as separate cards.
+
 Never commit `.env`, authentication material, webhook URLs, or generated SigNoz resources. The
 only runtime component with mutation capability is the restricted action runner, and every action
 is registered, target-validated, idempotent, policy-gated, and verified.
