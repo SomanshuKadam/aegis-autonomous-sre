@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     inventory_url: str = Field("http://inventory:8082", alias="AEGIS_INVENTORY_URL")
     worker_url: str = Field("http://worker:8083", alias="AEGIS_WORKER_URL")
     signoz_url: str = Field("http://localhost:8080", alias="AEGIS_SIGNOZ_URL")
+    slack_signing_secret: SecretStr = Field(SecretStr(""), alias="SLACK_SIGNING_SECRET")
+    slack_interaction_forward_url: str = Field("http://n8n:5678/webhook/approval-resume", alias="AEGIS_SLACK_INTERACTION_FORWARD_URL")
     normal_workload_enabled: bool = Field(True, alias="AEGIS_NORMAL_WORKLOAD_ENABLED")
     demo_workload_enabled: bool = Field(False, alias="AEGIS_DEMO_WORKLOAD_ENABLED")
     search_recovery_ms: int = Field(2000, ge=1, alias="AEGIS_SEARCH_RECOVERY_MS")

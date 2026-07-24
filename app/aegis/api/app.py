@@ -9,6 +9,7 @@ from aegis.api.orchestration import router as orchestration_router
 from aegis.api.commerce import router as commerce_router
 from aegis.api.operations import create_router as create_operations_router
 from aegis.api.evaluation import router as evaluation_router
+from aegis.api.slack import router as slack_router
 from aegis.api.orchestration import incidents
 from opentelemetry import trace
 from pymongo import MongoClient
@@ -21,6 +22,7 @@ def create_app() -> FastAPI:
     app.include_router(commerce_router)
     app.include_router(create_operations_router(incidents))
     app.include_router(evaluation_router)
+    app.include_router(slack_router)
     settings = get_settings()
     async def reconcile_stale_incidents() -> None:
         while True:

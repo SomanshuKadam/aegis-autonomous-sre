@@ -84,6 +84,32 @@ stops at explicit approval because its registered action is medium risk. The scr
 source trace and Aegis incident URL; Slack shows detection, Codex diagnosis, the bounded action,
 and the verified outcome as separate cards.
 
+## Enable Slack approval buttons
+
+For `APPROVAL_REQUIRED` incidents, Slack can show **Approve remediation** and **Reject
+remediation** buttons. Slack must be able to reach the API over a public HTTPS URL; it cannot
+call `localhost` or a Docker service name.
+
+1. Copy the Slack app's **Signing Secret** from **Basic Information** into the local `.env` file:
+
+   ```text
+   SLACK_SIGNING_SECRET=replace-with-the-signing-secret
+   ```
+
+2. Expose local API port `8081` through an HTTPS tunnel, for example `ngrok http 8081`.
+
+3. In Slack, open **Interactivity & Shortcuts**, enable it, and set **Request URL** to:
+
+   ```text
+   https://your-public-tunnel-host/api/v1/slack/interactions
+   ```
+
+4. Save the Slack configuration, then recreate the API container so it reads the Signing Secret.
+
+The API verifies Slack's request signature and forwards only the exact incident and approval IDs
+embedded in the Block Kit action to the internal n8n approval-resume workflow. The original Slack
+card is replaced with the recorded decision, and n8n posts the verified outcome afterward.
+
 Never commit `.env`, authentication material, webhook URLs, or generated SigNoz resources. The
 only runtime component with mutation capability is the restricted action runner, and every action
 is registered, target-validated, idempotent, policy-gated, and verified.
