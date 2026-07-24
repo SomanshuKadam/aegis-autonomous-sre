@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     search_recovery_ms: int = Field(2000, ge=1, alias="AEGIS_SEARCH_RECOVERY_MS")
     worker_min_capacity: int = Field(1, ge=1, alias="AEGIS_WORKER_MIN_CAPACITY")
     worker_max_capacity: int = Field(4, ge=1, alias="AEGIS_WORKER_MAX_CAPACITY")
+    incident_stale_seconds: int = Field(3600, ge=60, alias="AEGIS_INCIDENT_STALE_SECONDS")
 
     def safe_summary(self) -> dict[str, object]:
         return {

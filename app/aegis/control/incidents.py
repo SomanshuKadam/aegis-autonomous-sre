@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from pymongo import ASCENDING
@@ -82,6 +82,36 @@ class IncidentStore:
     def list(self, *, cursor: int = 0, limit: int = 50) -> list[dict[str, object]]:
         records = self.incidents.find({}).sort("updated_at", -1).skip(cursor).limit(min(limit, 100))
         return [_document(record) for record in records]
+
+    def counts(self) -> dict[str, int]:
+        terminal = [state.value for state in {IncidentState.RESOLVED, IncidentState.FAILED, IncidentState.ROLLED_BACK, IncidentState.ESCALATED, IncidentState.BLOCKED}]
+        return {
+            "incident_count": self.incidents.count_documents({}),
+            "active_incidents": self.incidents.count_documents({"state": {"$nin": terminal}}),
+        }
+
+    def expire_stale(self, max_age_seconds: int) -> list[str]:
+        """Escalate abandoned non-terminal workflows while preserving their history."""
+        now = utc_now()
+        cutoff = now - timedelta(seconds=max_age_seconds)
+        terminal = [state.value for state in {IncidentState.RESOLVED, IncidentState.FAILED, IncidentState.ROLLED_BACK, IncidentState.ESCALATED, IncidentState.BLOCKED}]
+        candidates = self.incidents.find({"state": {"$nin": terminal}, "updated_at": {"$lt": cutoff}}, {"incident_id": 1, "state": 1})
+        expired: list[str] = []
+        for candidate in candidates:
+            incident_id = str(candidate["incident_id"])
+            previous_state = str(candidate["state"])
+            result = self.incidents.find_one_and_update(
+                {"incident_id": incident_id, "state": previous_state, "updated_at": {"$lt": cutoff}},
+                {"$set": {"state": IncidentState.ESCALATED.value, "updated_at": now}, "$inc": {"timeline_sequence": 1, "version": 1}},
+                return_document=True,
+            )
+            if result is None:
+                continue
+            reason = f"Workflow exceeded the {max_age_seconds}-second stale incident timeout without a terminal outcome"
+            self._append(incident_id, IncidentState.ESCALATED.value, "lifecycle", "expired", reason, now, "reconciler")
+            self.commands.insert_one({"incident_id": incident_id, "command_id": f"stale-expiry-{result['version']}", "target_state": IncidentState.ESCALATED.value, "disposition": "expired", "actor": "reconciler", "occurred_at": now})
+            expired.append(incident_id)
+        return expired
 
     def records(self, incident_id: str) -> dict[str, list[dict[str, object]]]:
         return {

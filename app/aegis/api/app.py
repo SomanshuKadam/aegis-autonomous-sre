@@ -22,6 +22,24 @@ def create_app() -> FastAPI:
     app.include_router(create_operations_router(incidents))
     app.include_router(evaluation_router)
     settings = get_settings()
+    async def reconcile_stale_incidents() -> None:
+        while True:
+            incidents.expire_stale(settings.incident_stale_seconds)
+            await asyncio.sleep(min(settings.incident_stale_seconds, 60))
+
+    @app.on_event("startup")
+    async def start_stale_incident_reconciler() -> None:
+        app.state.stale_incident_reconciler = asyncio.create_task(reconcile_stale_incidents())
+
+    @app.on_event("shutdown")
+    async def stop_stale_incident_reconciler() -> None:
+        task = app.state.stale_incident_reconciler
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
     client = MongoClient(settings.mongodb_uri.get_secret_value(), serverSelectionTimeoutMS=5000)
     collection = client[settings.mongo_database]["mycollection"]
     products = client[settings.mongo_database]["products"]

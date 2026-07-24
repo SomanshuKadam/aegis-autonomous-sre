@@ -23,7 +23,7 @@ async def generate() -> None:
                 service.record_order(run.run_id)
             except Exception:
                 state["failures"] += 1
-            await asyncio.sleep(float(os.getenv("AEGIS_WORKLOAD_INTERVAL_SECONDS", "5")))
+            await asyncio.sleep(float(os.getenv("AEGIS_WORKLOAD_INTERVAL_SECONDS", "30")))
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):

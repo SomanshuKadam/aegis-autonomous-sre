@@ -21,12 +21,13 @@ def create_router(store: object) -> APIRouter:
 
     @router.get("/overview")
     def get_overview() -> dict[str, object]:
+        counts = store.counts()
         services = {
             "inventory": service_health("Inventory", f"{settings.inventory_url.rstrip('/')}/health"),
             "worker": service_health("Worker", f"{settings.worker_url.rstrip('/')}/health"),
             "workload": service_health("Workload", "http://workload:8084/health"),
         }
-        return overview(store.list(), services)
+        return overview(store.list(limit=10), services, **counts)
     @router.get("/incidents")
     def list_incidents(cursor: int = 0, limit: int = 50, state: str | None = None, category: str | None = None) -> JSONResponse:
         values = store.list(cursor=cursor, limit=limit)
