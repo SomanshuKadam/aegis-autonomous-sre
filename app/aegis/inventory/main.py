@@ -22,7 +22,17 @@ class ReservationRequest(BaseModel):
 def health() -> dict[str, object]:
     state = capacity.read()
     metrics = inventory.metrics()
-    return {"status": "ok" if state["healthy"] else "degraded", "service": "aegis-inventory", "capacity": state["desired"], "maximum": state["maximum"], "in_flight": state.get("in_flight", 0), "resource_saturated": int(state.get("in_flight", 0)) >= int(state["desired"]), "metrics": metrics}
+    saturated = int(state.get("in_flight", 0)) >= int(state["desired"]) or int(metrics.get("failures", 0)) > 0
+    evidence_name = "aegis.evidence.inventory_capacity_saturated" if saturated else "aegis.evidence.inventory_capacity_healthy"
+    with tracer.start_as_current_span(evidence_name) as evidence_span:
+        evidence_span.set_attribute("aegis.evidence.source", "live_inventory_state")
+        evidence_span.set_attribute("inventory.capacity", int(state["desired"]))
+        evidence_span.set_attribute("inventory.maximum", int(state["maximum"]))
+        evidence_span.set_attribute("inventory.in_flight", int(state.get("in_flight", 0)))
+        evidence_span.set_attribute("inventory.failures", int(metrics.get("failures", 0)))
+        evidence_span.set_attribute("inventory.error_rate", float(metrics.get("error_rate", 0.0)))
+        evidence_span.set_attribute("inventory.resource_saturated", saturated)
+    return {"status": "ok" if state["healthy"] else "degraded", "service": "aegis-inventory", "capacity": state["desired"], "maximum": state["maximum"], "in_flight": state.get("in_flight", 0), "resource_saturated": saturated, "metrics": metrics}
 
 @app.post("/reservations")
 def reserve(payload: ReservationRequest, traceparent: str | None = Header(default=None)) -> dict[str, object]:
@@ -30,6 +40,12 @@ def reserve(payload: ReservationRequest, traceparent: str | None = Header(defaul
     if not capacity.acquire_slot():
         latency = round((perf_counter() - started) * 1000, 3)
         inventory.record_operation(False, latency, "capacity_exhausted")
+        with tracer.start_as_current_span("aegis.evidence.inventory_capacity_exhausted") as evidence_span:
+            state = capacity.read()
+            evidence_span.set_attribute("aegis.evidence.source", "live_inventory_admission")
+            evidence_span.set_attribute("inventory.capacity", int(state["desired"]))
+            evidence_span.set_attribute("inventory.in_flight", int(state.get("in_flight", 0)))
+            evidence_span.set_attribute("inventory.resource_saturated", True)
         raise HTTPException(status_code=503, detail="inventory dependency capacity is exhausted")
     try:
         with tracer.start_as_current_span("inventory.reserve") as span:

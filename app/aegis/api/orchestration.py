@@ -1,5 +1,6 @@
 from __future__ import annotations
 from fastapi import APIRouter, Body, Depends
+from typing import Literal
 from pydantic import BaseModel, Field
 from aegis.api.security import require_operator, require_orchestrator
 from aegis.control.action_registry import resolve
@@ -31,6 +32,21 @@ class AdvanceInput(BaseModel):
     target_state: str = Field(min_length=1)
     command_id: str = Field(min_length=1)
 
+class AgentAnalysisInput(BaseModel):
+    incident_id: str = Field(pattern="^[0-9a-f]{32}$")
+    trace_id: str = Field(pattern="^[0-9a-f]{32}$")
+    category: Literal["catalog_search", "inventory_dependency", "order_backlog"]
+    diagnosis: str = Field(min_length=1, max_length=1200)
+    plausible_solution: str = Field(min_length=1, max_length=1200)
+    evidence: list[str] = Field(min_length=1, max_length=8)
+    selected_action: Literal[
+        "mongo.create_search_index@1",
+        "inventory.restore_capacity@1",
+        "worker.set_capacity@1",
+        "none",
+    ]
+    safe_to_proceed: bool
+
 @router.post("/alerts", dependencies=[Depends(require_orchestrator)])
 def ingest_alert(payload: AlertInput) -> dict[str, object]:
     from aegis.control.idempotency import dedup_key
@@ -41,6 +57,41 @@ def ingest_alert(payload: AlertInput) -> dict[str, object]:
 def process_incident(incident_id: str) -> dict[str, object]:
     result = orchestrator.process(incident_id)
     return {"incident_id": result.incident["incident_id"], "state": result.incident["state"], "outcome": result.outcome, "next_step": result.next_step}
+
+@router.post("/incidents/{incident_id}/agent-analysis", dependencies=[Depends(require_orchestrator)])
+def record_agent_analysis(incident_id: str, payload: AgentAnalysisInput) -> dict[str, object]:
+    incident = incidents.get(incident_id)
+    expected_actions = {
+        "catalog_search": "mongo.create_search_index@1",
+        "inventory_dependency": "inventory.restore_capacity@1",
+        "order_backlog": "worker.set_capacity@1",
+    }
+    if payload.incident_id != incident_id:
+        raise ValueError("agent analysis incident does not match the route")
+    if payload.category != incident["category"]:
+        raise ValueError("agent analysis category does not match the incident")
+    if payload.trace_id != incident.get("trace_id"):
+        raise ValueError("agent analysis trace does not match the source alert")
+    expected_action = expected_actions[payload.category]
+    if payload.safe_to_proceed and payload.selected_action != expected_action:
+        raise ValueError("agent analysis selected an action outside the incident allowlist")
+    if not payload.safe_to_proceed and payload.selected_action != "none":
+        raise ValueError("unsafe agent analysis must not select an action")
+    record = incidents.record(
+        "agent_runs",
+        incident_id,
+        {
+            "agent": "codex-signoz-investigator",
+            "outcome": "SUPPORTED" if payload.safe_to_proceed else "INSUFFICIENT_EVIDENCE",
+            **payload.model_dump(),
+        },
+    )
+    return {
+        "incident_id": incident_id,
+        "accepted": True,
+        "safe_to_proceed": record["safe_to_proceed"],
+        "selected_action": record["selected_action"],
+    }
 
 @router.post("/incidents")
 def create_incident(payload: dict = Body(...)) -> dict[str, object]:

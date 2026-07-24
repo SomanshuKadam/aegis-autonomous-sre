@@ -3,58 +3,687 @@
   "name": "Aegis Autonomous Incident Lifecycle",
   "nodes": [
     {
-      "parameters": {"httpMethod": "POST", "path": "aegis-lifecycle-alert", "responseMode": "onReceived", "options": {}},
-      "id": "alert-webhook", "name": "SigNoz Alert Webhook", "type": "n8n-nodes-base.webhook", "typeVersion": 2, "position": [-780, 0], "webhookId": "aegis-lifecycle-alert"
+      "parameters": {
+        "jsCode": "const source=$('Normalize Correlated Alert').first().json; const incident=$json.incident_id; return [{json:{text:'Aegis detected '+source.alert_name,blocks:[{type:'header',text:{type:'plain_text',text:'🚨 Aegis Incident Detected',emoji:true}},{type:'section',fields:[{type:'mrkdwn',text:'*Alert*\\n'+source.alert_name},{type:'mrkdwn',text:'*Status*\\n'+source.status},{type:'mrkdwn',text:'*Incident*\\n`'+incident+'`'},{type:'mrkdwn',text:'*Trace ID*\\n`'+source.trace_id+'`'}]},{type:'context',elements:[{type:'mrkdwn',text:'Codex is inspecting current SigNoz evidence. No system state has changed.'}]},{type:'actions',elements:[{type:'button',text:{type:'plain_text',text:'Open Aegis incident',emoji:true},url:'http://localhost:3000/ops/incidents/'+incident,style:'primary'}]}]}}];"
+      },
+      "id": "prepare-trigger",
+      "name": "Prepare Trigger Card",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-900, 0]
     },
     {
-      "parameters": {"jsCode": "const payload = $json.body ?? $json; const alert = Array.isArray(payload.alerts) ? payload.alerts[0] : payload; const labels = alert.labels ?? {}; const fingerprint = alert.fingerprint ?? labels.fingerprint ?? labels.alertname; if (!fingerprint) throw new Error('alert fingerprint is required'); const category = String(labels.category ?? payload.category ?? 'catalog_search'); const targets = {catalog_search:{type:'mongodb_collection', database:'mydatabase', collection:'products', field:'search_text'}, inventory_dependency:{type:'inventory_dependency'}, order_backlog:{type:'order_worker'}}; if (!Object.hasOwn(targets, category)) throw new Error('unsupported incident category'); const target = payload.target ?? targets[category]; if (target.type !== targets[category].type) throw new Error('alert target does not match category'); const traceId = alert.trace_id ?? alert.annotations?.trace_id ?? labels.trace_id ?? payload.trace_id; return [{json:{source:'signoz', fingerprint:String(fingerprint), category, target, trace_id: typeof traceId === 'string' && /^[0-9a-f]{32}$/.test(traceId) ? traceId : undefined}}];"},
-      "id": "normalize-alert", "name": "Normalize Correlated Alert", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [-540, 0]
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "aegis-lifecycle-alert",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "alert-webhook",
+      "name": "SigNoz Alert Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-1500, 0],
+      "webhookId": "aegis-lifecycle-alert"
     },
     {
-      "parameters": {"method": "POST", "url": "={{ $env.AEGIS_API_URL + '/api/v1/orchestration/alerts' }}", "sendHeaders": true, "headerParameters": {"parameters": [{"name": "Authorization", "value": "={{ 'Bearer ' + $env.AEGIS_ORCHESTRATOR_TOKEN }}"}]}, "sendBody": true, "specifyBody": "json", "jsonBody": "={{ $json }}", "options": {"retry": {"maxTries": 3}}},
-      "id": "register-alert", "name": "Register Deduplicated Alert", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [-280, 0]
+      "parameters": {
+        "jsCode": "const payload = $json.body ?? $json; const alert = Array.isArray(payload.alerts) ? payload.alerts[0] : payload; const labels = alert.labels ?? {}; const annotations = alert.annotations ?? {}; const fingerprint = alert.fingerprint ?? labels.fingerprint ?? labels.alertname ?? payload.fingerprint; if (!fingerprint) throw new Error('alert fingerprint is required'); const category = String(labels.category ?? payload.category ?? 'catalog_search').toLowerCase(); const targets = {catalog_search:{type:'mongodb_collection',database:'mydatabase',collection:'products',field:'search_text'},inventory_dependency:{type:'inventory_dependency'},order_backlog:{type:'order_worker'}}; if (!Object.hasOwn(targets, category)) throw new Error('unsupported incident category'); const target = payload.target ?? targets[category]; if (target.type !== targets[category].type) throw new Error('alert target does not match category'); const traceId = alert.trace_id ?? annotations.trace_id ?? labels.trace_id ?? payload.trace_id; if (typeof traceId !== 'string' || !/^[0-9a-f]{32}$/i.test(traceId)) throw new Error('SigNoz alert must contain a 32-character source trace ID'); return [{json:{source:'signoz',fingerprint:String(fingerprint),category,target,trace_id:traceId.toLowerCase(),alert_name:String(labels.alertname ?? payload.alert_name ?? category.replaceAll('_',' ') + ' threshold breached'),status:String(payload.status ?? alert.status ?? 'firing'),received_at:new Date().toISOString()}}];"
+      },
+      "id": "normalize-alert",
+      "name": "Normalize Correlated Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1260, 0]
     },
     {
-      "parameters": {"method": "POST", "url": "={{ $env.AEGIS_API_URL + '/api/v1/orchestration/incidents/' + $json.incident_id + '/process' }}", "sendHeaders": true, "headerParameters": {"parameters": [{"name": "Authorization", "value": "={{ 'Bearer ' + $env.AEGIS_ORCHESTRATOR_TOKEN }}"}]}, "options": {"retry": {"maxTries": 3}}},
-      "id": "process-incident", "name": "Process Incident Lifecycle", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [-20, 0]
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.AEGIS_API_URL + '/api/v1/orchestration/alerts' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.AEGIS_ORCHESTRATOR_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {source:$json.source,fingerprint:$json.fingerprint,category:$json.category,target:$json.target,trace_id:$json.trace_id} }}",
+        "options": {
+          "retry": {
+            "maxTries": 3
+          }
+        }
+      },
+      "id": "register-alert",
+      "name": "Register Deduplicated Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-1020, 0]
     },
     {
-      "parameters": {"conditions": {"options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2}, "conditions": [{"leftValue": "={{ $env.SLACK_WEBHOOK_URL }}", "rightValue": "", "operator": {"type": "string", "operation": "notEmpty"}}]}, "options": {}},
-      "id": "slack-configured", "name": "Slack Webhook Configured", "type": "n8n-nodes-base.if", "typeVersion": 2.2, "position": [220, 80]
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {
+          "retry": {
+            "maxTries": 3
+          }
+        }
+      },
+      "id": "slack-trigger",
+      "name": "Slack Trigger",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-780, 0],
+      "onError": "continueRegularOutput"
     },
     {
-      "parameters": {"method": "POST", "url": "={{ $env.SLACK_WEBHOOK_URL }}", "sendBody": true, "specifyBody": "json", "jsonBody": "={{ {text: 'Aegis incident ' + $json.incident_id + ' reached ' + $json.state + ' (' + $json.outcome + ')', blocks: [{type:'header', text:{type:'plain_text', text:'Aegis reliability update', emoji:true}}, {type:'section', fields:[{type:'mrkdwn', text:'*State*\\n' + $json.state},{type:'mrkdwn', text:'*Outcome*\\n' + $json.outcome}]}, {type:'section', text:{type:'mrkdwn', text:'*Incident*\\n`' + $json.incident_id + '`\\n*Next step*\\n' + ($json.next_step || 'Review the Aegis incident timeline')}}, {type:'actions', elements:[{type:'button', text:{type:'plain_text', text:'Open Aegis incident', emoji:true}, url:'http://localhost:3000/ops/incidents/' + $json.incident_id, style:'primary'}]}] } }}", "options": {"retry": {"maxTries": 3}}},
-      "id": "send-slack", "name": "Deliver Slack Lifecycle Update", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [240, 0], "onError": "continueRegularOutput"
+      "parameters": {
+        "jsCode": "const a=$('Validate Codex Analysis').first().json; return [{json:{text:'Codex diagnosed Aegis incident '+a.incident_id,blocks:[{type:'header',text:{type:'plain_text',text:'🔎 Codex Diagnosis',emoji:true}},{type:'section',text:{type:'mrkdwn',text:'*Problem*\\n'+a.diagnosis}},{type:'section',text:{type:'mrkdwn',text:'*Plausible solution*\\n'+a.plausible_solution}},{type:'section',fields:[{type:'mrkdwn',text:'*Category*\\n`'+a.category+'`'},{type:'mrkdwn',text:'*Evidence gate*\\n'+(a.safe_to_proceed?'Passed':'Blocked')}]},{type:'context',elements:[{type:'mrkdwn',text:'*SigNoz evidence:* '+a.evidence.join(' • ')}]}]}}];"
+      },
+      "id": "prepare-analysis",
+      "name": "Prepare Diagnosis Card",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 0]
     },
     {
-      "parameters": {"jsCode": "let outcome; try { outcome = $('Process Incident Lifecycle').first().json; } catch (_) { outcome = $('Resume Approved Incident').first().json; } const slackConfigured = Boolean($env.SLACK_WEBHOOK_URL); const failed = Boolean($json.error); return [{json:{incident_id:outcome.incident_id, channel:'slack', delivered:slackConfigured && !failed, detail: failed ? String($json.error.message ?? $json.error) : (slackConfigured ? 'n8n Slack lifecycle update delivered' : 'SLACK_WEBHOOK_URL is not configured')}}];"},
-      "id": "notification-outcome", "name": "Classify Notification Outcome", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [500, 0]
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.AEGIS_API_URL + '/api/v1/orchestration/notifications' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.AEGIS_ORCHESTRATOR_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {incident_id:$('Register Deduplicated Alert').item.json.incident_id,channel:'slack-trigger',delivered:!Boolean($json.error),detail:$json.error ? String($json.error.message ?? $json.error) : 'incident detection card delivered'} }}",
+        "options": {}
+      },
+      "id": "record-trigger",
+      "name": "Record Trigger Delivery",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-540, 0]
     },
     {
-      "parameters": {"method": "POST", "url": "={{ $env.AEGIS_API_URL + '/api/v1/orchestration/notifications' }}", "sendHeaders": true, "headerParameters": {"parameters": [{"name": "Authorization", "value": "={{ 'Bearer ' + $env.AEGIS_ORCHESTRATOR_TOKEN }}"}]}, "sendBody": true, "specifyBody": "json", "jsonBody": "={{ $json }}", "options": {"retry": {"maxTries": 3}}},
-      "id": "record-notification", "name": "Record Independent Notification Outcome", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [760, 0]
+      "parameters": {
+        "command": "=sh /opt/aegis/aegis-agent.sh analyze {{ $('Register Deduplicated Alert').item.json.incident_id }} {{ $('Normalize Correlated Alert').item.json.category }} {{ $('Normalize Correlated Alert').item.json.trace_id }}"
+      },
+      "id": "codex-analysis",
+      "name": "Codex Investigate SigNoz",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [-300, 0]
     },
     {
-      "parameters": {"httpMethod": "POST", "path": "approval-resume", "responseMode": "lastNode", "options": {}},
-      "id": "approval-webhook", "name": "Approval Resume Webhook", "type": "n8n-nodes-base.webhook", "typeVersion": 2, "position": [-20, 220], "webhookId": "aegis-approval-resume"
+      "parameters": {
+        "jsCode": "const raw=$json.stdout?.trim(); if(!raw) throw new Error('Codex investigation returned no output'); const result=JSON.parse(raw.split('\\n').at(-1)); const incident=$('Register Deduplicated Alert').item.json.incident_id; const source=$('Normalize Correlated Alert').item.json; if(result.incident_id!==incident || result.trace_id!==source.trace_id || result.category!==source.category) throw new Error('Codex output correlation mismatch'); const expected={catalog_search:'mongo.create_search_index@1',inventory_dependency:'inventory.restore_capacity@1',order_backlog:'worker.set_capacity@1'}[source.category]; if(result.safe_to_proceed && result.selected_action!==expected) throw new Error('Codex selected an unregistered action for this incident'); if(!result.safe_to_proceed && result.selected_action!=='none') throw new Error('unsafe analysis selected a mutation'); return [{json:result}];"
+      },
+      "id": "validate-analysis",
+      "name": "Validate Codex Analysis",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-60, 0]
     },
     {
-      "parameters": {"method": "POST", "url": "={{ $env.AEGIS_API_URL + '/api/v1/orchestration/incidents/' + $json.body.incident_id + '/approve' }}", "sendHeaders": true, "headerParameters": {"parameters": [{"name": "Authorization", "value": "={{ 'Bearer ' + $env.AEGIS_OPERATOR_TOKEN }}"}]}, "sendBody": true, "specifyBody": "json", "jsonBody": "={{ {approval_id:$json.body.approval_id, approver:$json.body.approver ?? 'n8n-approval', decision:$json.body.decision ?? 'APPROVED'} }}", "options": {"retry": {"maxTries": 3}}},
-      "id": "resume-approved-incident", "name": "Resume Approved Incident", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [250, 220]
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.AEGIS_API_URL + '/api/v1/orchestration/incidents/' + $json.incident_id + '/agent-analysis' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.AEGIS_ORCHESTRATOR_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $('Validate Codex Analysis').item.json }}",
+        "options": {}
+      },
+      "id": "record-analysis",
+      "name": "Record Codex Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [180, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {
+          "retry": {
+            "maxTries": 3
+          }
+        }
+      },
+      "id": "slack-analysis",
+      "name": "Slack Codex Diagnosis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [420, 0],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const a=$('Validate Codex Analysis').first().json; return [{json:{text:'Aegis is applying the Codex remediation plan',blocks:[{type:'header',text:{type:'plain_text',text:'🛠️ Codex Remediation Plan',emoji:true}},{type:'section',text:{type:'mrkdwn',text:'*Registered bounded action*\\n`'+a.selected_action+'`'}},{type:'section',text:{type:'mrkdwn',text:'*Expected effect*\\n'+a.plausible_solution}},{type:'context',elements:[{type:'mrkdwn',text:'Codex selected the plan. Deterministic policy checks it and the isolated runner is the only component allowed to mutate state.'}]}]}}];"
+      },
+      "id": "prepare-action",
+      "name": "Prepare Remediation Card",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1020, -100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.AEGIS_API_URL + '/api/v1/orchestration/notifications' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.AEGIS_ORCHESTRATOR_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {incident_id:$('Register Deduplicated Alert').item.json.incident_id,channel:'slack-analysis',delivered:!Boolean($json.error),detail:$json.error ? String($json.error.message ?? $json.error) : 'Codex diagnosis card delivered'} }}",
+        "options": {}
+      },
+      "id": "record-analysis-delivery",
+      "name": "Record Analysis Delivery",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $('Validate Codex Analysis').item.json.safe_to_proceed }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "analysis-supported",
+      "name": "Codex Found Bounded Action",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [900, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {
+          "retry": {
+            "maxTries": 3
+          }
+        }
+      },
+      "id": "slack-action",
+      "name": "Slack Remediation Plan",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1140, -100],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const d=$json; const run=(d.agent_runs??[]).at(-1)??{}; const execution=(d.executions??[]).at(-1)??{}; const verification=(d.verifications??[]).at(-1)??{}; const approval=(d.approvals??[]).at(-1)??{}; const resolved=d.state==='RESOLVED'; const blocked=['BLOCKED','ESCALATED','FAILED'].includes(d.state); const title=resolved?'✅ Aegis Resolution':d.state==='APPROVAL_REQUIRED'?'⏸️ Approval Required':blocked?'🛑 Aegis Safely Stopped':'ℹ️ Aegis Update'; const button={type:'button',text:{type:'plain_text',text:'Open incident timeline',emoji:true},url:'http://localhost:3000/ops/incidents/'+d.incident_id}; if(resolved) button.style='primary'; return [{json:{text:'Aegis incident '+d.incident_id+' reached '+d.state,blocks:[{type:'header',text:{type:'plain_text',text:title,emoji:true}},{type:'section',fields:[{type:'mrkdwn',text:'*State*\\n'+d.state},{type:'mrkdwn',text:'*Category*\\n'+d.category},{type:'mrkdwn',text:'*Codex action*\\n`'+(run.selected_action??'none')+'`'},{type:'mrkdwn',text:'*Execution*\\n'+(execution.state??(approval.state?'Waiting for '+approval.state:'Not executed'))}]},{type:'section',text:{type:'mrkdwn',text:'*Diagnosis*\\n'+(run.diagnosis??'No diagnosis recorded')+'\\n\\n*Verification*\\n'+(verification.outcome??(d.state==='APPROVAL_REQUIRED'?'Pending explicit approval':'No verification performed'))}},{type:'context',elements:[{type:'mrkdwn',text:'Trace `'+(d.trace_id??'unavailable')+'` • Incident `'+d.incident_id+'`'}]},{type:'actions',elements:[button]}]}}];"
+      },
+      "id": "prepare-outcome",
+      "name": "Prepare Outcome Card",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1980, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.AEGIS_API_URL + '/api/v1/orchestration/notifications' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.AEGIS_ORCHESTRATOR_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {incident_id:$('Register Deduplicated Alert').item.json.incident_id,channel:'slack-action',delivered:!Boolean($json.error),detail:$json.error ? String($json.error.message ?? $json.error) : 'remediation plan card delivered'} }}",
+        "options": {}
+      },
+      "id": "record-action-delivery",
+      "name": "Record Action Delivery",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1380, -100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.AEGIS_API_URL + '/api/v1/orchestration/incidents/' + $('Register Deduplicated Alert').item.json.incident_id + '/process' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.AEGIS_ORCHESTRATOR_TOKEN }}"
+            }
+          ]
+        },
+        "options": {
+          "retry": {
+            "maxTries": 3
+          }
+        }
+      },
+      "id": "process-incident",
+      "name": "Apply Policy Remediate and Verify",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1620, 0]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.AEGIS_API_URL + '/api/v1/orchestration/incidents/' + $json.incident_id }}",
+        "options": {}
+      },
+      "id": "fetch-detail",
+      "name": "Fetch Verified Incident",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1860, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {
+          "retry": {
+            "maxTries": 3
+          }
+        }
+      },
+      "id": "slack-outcome",
+      "name": "Slack Verified Outcome",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2100, 0],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.AEGIS_API_URL + '/api/v1/orchestration/notifications' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.AEGIS_ORCHESTRATOR_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {incident_id:$('Fetch Verified Incident').item.json.incident_id,channel:'slack-outcome',delivered:!Boolean($json.error),detail:$json.error ? String($json.error.message ?? $json.error) : 'verified outcome card delivered'} }}",
+        "options": {}
+      },
+      "id": "record-outcome",
+      "name": "Record Outcome Delivery",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2340, 0]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "approval-resume",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "approval-webhook",
+      "name": "Approval Resume Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [1380, 260],
+      "webhookId": "aegis-approval-resume"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.AEGIS_API_URL + '/api/v1/orchestration/incidents/' + $json.body.incident_id + '/approve' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.AEGIS_OPERATOR_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {approval_id:$json.body.approval_id,approver:$json.body.approver ?? 'n8n-approval',decision:$json.body.decision ?? 'APPROVED'} }}",
+        "options": {
+          "retry": {
+            "maxTries": 3
+          }
+        }
+      },
+      "id": "resume-approved",
+      "name": "Resume Approved Incident",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1620, 260]
     }
   ],
   "connections": {
-    "SigNoz Alert Webhook": {"main": [[{"node": "Normalize Correlated Alert", "type": "main", "index": 0}]]},
-    "Normalize Correlated Alert": {"main": [[{"node": "Register Deduplicated Alert", "type": "main", "index": 0}]]},
-    "Register Deduplicated Alert": {"main": [[{"node": "Process Incident Lifecycle", "type": "main", "index": 0}]]},
-    "Process Incident Lifecycle": {"main": [[{"node": "Slack Webhook Configured", "type": "main", "index": 0}]]},
-    "Slack Webhook Configured": {"main": [[{"node": "Deliver Slack Lifecycle Update", "type": "main", "index": 0}], [{"node": "Classify Notification Outcome", "type": "main", "index": 0}]]},
-    "Deliver Slack Lifecycle Update": {"main": [[{"node": "Classify Notification Outcome", "type": "main", "index": 0}]]},
-    "Classify Notification Outcome": {"main": [[{"node": "Record Independent Notification Outcome", "type": "main", "index": 0}]]},
-    "Approval Resume Webhook": {"main": [[{"node": "Resume Approved Incident", "type": "main", "index": 0}]]},
-    "Resume Approved Incident": {"main": [[{"node": "Slack Webhook Configured", "type": "main", "index": 0}]]}
+    "SigNoz Alert Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Correlated Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Correlated Alert": {
+      "main": [
+        [
+          {
+            "node": "Register Deduplicated Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Register Deduplicated Alert": {
+      "main": [
+        [
+          {
+            "node": "Prepare Trigger Card",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Trigger Card": {
+      "main": [
+        [
+          {
+            "node": "Slack Trigger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack Trigger": {
+      "main": [
+        [
+          {
+            "node": "Record Trigger Delivery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Trigger Delivery": {
+      "main": [
+        [
+          {
+            "node": "Codex Investigate SigNoz",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Codex Investigate SigNoz": {
+      "main": [
+        [
+          {
+            "node": "Validate Codex Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Codex Analysis": {
+      "main": [
+        [
+          {
+            "node": "Record Codex Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Codex Analysis": {
+      "main": [
+        [
+          {
+            "node": "Prepare Diagnosis Card",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Diagnosis Card": {
+      "main": [
+        [
+          {
+            "node": "Slack Codex Diagnosis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack Codex Diagnosis": {
+      "main": [
+        [
+          {
+            "node": "Record Analysis Delivery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Analysis Delivery": {
+      "main": [
+        [
+          {
+            "node": "Codex Found Bounded Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Codex Found Bounded Action": {
+      "main": [
+        [
+          {
+            "node": "Prepare Remediation Card",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Apply Policy Remediate and Verify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Remediation Card": {
+      "main": [
+        [
+          {
+            "node": "Slack Remediation Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack Remediation Plan": {
+      "main": [
+        [
+          {
+            "node": "Record Action Delivery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Action Delivery": {
+      "main": [
+        [
+          {
+            "node": "Apply Policy Remediate and Verify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Policy Remediate and Verify": {
+      "main": [
+        [
+          {
+            "node": "Fetch Verified Incident",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resume Approved Incident": {
+      "main": [
+        [
+          {
+            "node": "Fetch Verified Incident",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Verified Incident": {
+      "main": [
+        [
+          {
+            "node": "Prepare Outcome Card",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Outcome Card": {
+      "main": [
+        [
+          {
+            "node": "Slack Verified Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack Verified Outcome": {
+      "main": [
+        [
+          {
+            "node": "Record Outcome Delivery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approval Resume Webhook": {
+      "main": [
+        [
+          {
+            "node": "Resume Approved Incident",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
-  "active": true,
-  "settings": {"executionOrder": "v1"},
-  "versionId": "aegis-autonomous-lifecycle-v2"
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "versionId": "62cba29e-55fd-4d9e-9814-901895ae4414",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
 }

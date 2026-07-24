@@ -13,8 +13,6 @@ from opentelemetry import trace
 from aegis.control.action_registry import resolve
 from aegis.control.approvals import ApprovalStore
 from aegis.control.backlog_incident import classify_backlog
-from aegis.control.agents import collect, evaluate_hypotheses, plan, triage
-from aegis.control.budgets import InvestigationBudget
 from aegis.control.evidence import ReadOnlyEvidence
 from aegis.control.incidents import IncidentStore
 from aegis.control.models import IncidentState
@@ -58,16 +56,45 @@ class IncidentOrchestrator:
 
         self._advance_to(incident_id, IncidentState.VALIDATING, "Validate alert identity and correlation")
         self._advance_to(incident_id, IncidentState.ENRICHING, "Collect read-only current evidence")
-        self._advance_to(incident_id, IncidentState.INVESTIGATING, "Classify incident and evaluate hypotheses")
+        self._advance_to(incident_id, IncidentState.INVESTIGATING, "Validate the recorded Codex SigNoz investigation")
         incident = self.incidents.get(incident_id)
-        budget = InvestigationBudget()
         category = str(incident["category"])
-        triage_result = triage(category, budget)
-        self.incidents.record("agent_runs", incident_id, {"agent": "triage", "outcome": triage_result["outcome"], "category": category, "allowed_action": triage_result.get("allowed_actions"), "budget": budget.__dict__})
+        agent_runs = [
+            item
+            for item in self.incidents.records(incident_id)["agent_runs"]
+            if item.get("agent") == "codex-signoz-investigator"
+        ]
+        if not agent_runs:
+            blocked = self._advance_to(
+                incident_id,
+                IncidentState.BLOCKED,
+                "No validated Codex SigNoz investigation is attached to this incident",
+            )
+            return OrchestrationResult(blocked, "BLOCKED", "run the read-only Codex investigation")
+        agent_result = agent_runs[-1]
         evidence = self._evidence_for(incident)
+        for item in evidence:
+            self.incidents.record("evidence", incident_id, {"evidence_id": new_id(), "type": item["source"], "source": item["source"], "freshness": "FRESH" if item.get("fresh") else "STALE", "observation": item.get("observation", {}), "reference": {"category": category, "source_trace_id": incident.get("trace_id")}, "required_for_mutation": True})
+        self.incidents.record(
+            "hypotheses",
+            incident_id,
+            {
+                "hypothesis_id": new_id(),
+                "statement": str(agent_result.get("diagnosis", "Codex returned no diagnosis")),
+                "plausible_solution": str(agent_result.get("plausible_solution", "")),
+                "disposition": "SUPPORTED" if agent_result.get("safe_to_proceed") else "REJECTED",
+                "evidence": list(agent_result.get("evidence", [])),
+                "source": "codex-signoz-investigator",
+            },
+        )
+        if not agent_result.get("safe_to_proceed"):
+            blocked = self._advance_to(
+                incident_id,
+                IncidentState.BLOCKED,
+                "Codex did not find sufficient current SigNoz evidence for a bounded action",
+            )
+            return OrchestrationResult(blocked, "BLOCKED", "review the Codex diagnosis and telemetry")
         if not self._has_required_condition(category, evidence):
-            for item in evidence:
-                self.incidents.record("evidence", incident_id, {"evidence_id": new_id(), "type": item["source"], "source": item["source"], "freshness": "FRESH" if item.get("fresh") else "STALE", "observation": item.get("observation", {}), "reference": {"category": category}, "required_for_mutation": True})
             blocked = self._advance_to(incident_id, IncidentState.BLOCKED, "Required current evidence does not prove the reported bounded condition")
             return OrchestrationResult(blocked, "BLOCKED", "collect current incident evidence")
         if category == "order_backlog":
@@ -77,20 +104,17 @@ class IncidentOrchestrator:
                 self.incidents.record("policy_decisions", incident_id, {"policy_decision_id": new_id(), "outcome": "ESCALATED", "reason": disposition["reason"], "risk": "LOW"})
                 escalated = self._advance_to(incident_id, IncidentState.ESCALATED, str(disposition["reason"]))
                 return OrchestrationResult(escalated, "ESCALATED", "no mutation")
-        for item in evidence:
-            self.incidents.record("evidence", incident_id, {"evidence_id": new_id(), "type": item["source"], "source": item["source"], "freshness": "FRESH" if item.get("fresh") else "STALE", "observation": item.get("observation", {}), "reference": {"category": category}, "required_for_mutation": True})
-        usable = collect(evidence, budget)
-        findings = evaluate_hypotheses(usable, budget)
-        self.incidents.record("hypotheses", incident_id, {"hypothesis_id": new_id(), "statement": findings.get("hypotheses", [{}])[0].get("statement", "No supported hypothesis") if findings.get("hypotheses") else "No supported hypothesis", "disposition": "SUPPORTED" if findings["outcome"] == "ROOT_CAUSE_IDENTIFIED" else "REJECTED", "evidence_count": len(usable)})
-        if findings["outcome"] != "ROOT_CAUSE_IDENTIFIED":
-            blocked = self._advance_to(incident_id, IncidentState.BLOCKED, "Investigation has insufficient current evidence")
-            return OrchestrationResult(blocked, "BLOCKED", "collect fresh evidence")
         self._advance_to(incident_id, IncidentState.ROOT_CAUSE_IDENTIFIED, "Evidence supports one bounded root cause")
-        proposal_seed = plan(category, usable, budget)
-        if proposal_seed["outcome"] != "ACTION_PROPOSED":
-            blocked = self._advance_to(incident_id, IncidentState.BLOCKED, str(proposal_seed.get("reason", "Planning was blocked")))
-            return OrchestrationResult(blocked, "BLOCKED", "collect required evidence")
-        proposal = self._proposal(incident, str(proposal_seed["action_key"]))
+        action_key = str(agent_result.get("selected_action", "none"))
+        expected_action = {
+            "catalog_search": "mongo.create_search_index@1",
+            "inventory_dependency": "inventory.restore_capacity@1",
+            "order_backlog": "worker.set_capacity@1",
+        }.get(category)
+        if action_key != expected_action:
+            blocked = self._advance_to(incident_id, IncidentState.BLOCKED, "Codex action selection does not match the registered action for this incident")
+            return OrchestrationResult(blocked, "BLOCKED", "no mutation")
+        proposal = self._proposal(incident, action_key)
         self.incidents.record("proposals", incident_id, proposal)
         self._advance_to(incident_id, IncidentState.ACTION_PROPOSED, f"Proposed registered action {proposal['action_key']}")
         action = resolve(str(proposal["action_key"]))
@@ -284,7 +308,7 @@ class IncidentOrchestrator:
         desired = int(dict(proposal["parameters"])["desired"])
         if proposal["action_key"] == "worker.set_capacity@1":
             baseline = dict(proposal.get("backlog_baseline", {}))
-            deadline = time.monotonic() + 35
+            deadline = time.monotonic() + 90
             health = httpx.get(f"{url.rstrip('/')}/health", timeout=10).json()
             while time.monotonic() < deadline and int(health.get("oldest_age_seconds", 0)) >= 30:
                 time.sleep(1.0)

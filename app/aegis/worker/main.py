@@ -3,6 +3,7 @@ import os
 import httpx
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Header, HTTPException
+from opentelemetry import trace
 from aegis.config import get_settings
 from aegis.domain.commerce_store import CommerceStore
 from aegis.control.service_state import ServiceState
@@ -10,6 +11,7 @@ from aegis.control.service_state import ServiceState
 state = {"processed": 0, "failures": 0, "running": True}
 capacity = ServiceState("worker", {"desired": 1, "previous": 1, "maximum": 4})
 commerce = CommerceStore()
+tracer = trace.get_tracer("aegis.worker")
 
 async def consume() -> None:
     url = os.getenv("AEGIS_API_URL", "http://api:8081")
@@ -37,6 +39,16 @@ app = FastAPI(title="Aegis Order Worker", lifespan=lifespan)
 def health() -> dict[str, object]:
     queue = commerce.queue_health()
     current = capacity.read()
+    backlog = int(queue["queue_depth"]) > 0 and int(queue["oldest_age_seconds"]) >= 30
+    evidence_name = "aegis.evidence.order_backlog" if backlog else "aegis.evidence.order_queue_healthy"
+    with tracer.start_as_current_span(evidence_name) as evidence_span:
+        evidence_span.set_attribute("aegis.evidence.source", "live_order_queue_state")
+        evidence_span.set_attribute("queue.depth", int(queue["queue_depth"]))
+        evidence_span.set_attribute("queue.oldest_age_seconds", int(queue["oldest_age_seconds"]))
+        evidence_span.set_attribute("worker.capacity", int(current["desired"]))
+        evidence_span.set_attribute("worker.maximum", int(current["maximum"]))
+        evidence_span.set_attribute("worker.healthy", True)
+        evidence_span.set_attribute("worker.resource_headroom", int(current["desired"]) < int(current["maximum"]))
     return {"status": "ok", "service": "aegis-worker", **state, **queue, "capacity": current["desired"], "maximum": current["maximum"], "resource_headroom": current["desired"] < current["maximum"]}
 
 @app.post("/control/capacity")

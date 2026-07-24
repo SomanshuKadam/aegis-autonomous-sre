@@ -78,6 +78,16 @@ def create_app() -> FastAPI:
         started = time.perf_counter(); indexed = has_catalog_index()
         with tracer.start_as_current_span("catalog.search") as span:
             span.set_attribute("db.system", "mongodb"); span.set_attribute("db.namespace", settings.mongo_database); span.set_attribute("db.collection.name", "products"); span.set_attribute("db.operation.name", "find"); span.set_attribute("aegis.index_present", indexed); span.set_attribute("catalog.query", q)
+            evidence_name = "aegis.evidence.catalog_index_present" if indexed else "aegis.evidence.catalog_index_absent"
+            with tracer.start_as_current_span(evidence_name) as evidence_span:
+                evidence_span.set_attribute("aegis.evidence.source", "live_mongodb_index_information")
+                evidence_span.set_attribute("db.system", "mongodb")
+                evidence_span.set_attribute("db.name", settings.mongo_database)
+                evidence_span.set_attribute("db.namespace", settings.mongo_database)
+                evidence_span.set_attribute("db.collection.name", "products")
+                evidence_span.set_attribute("db.index.field", "search_text")
+                evidence_span.set_attribute("db.index.type", "ascending")
+                evidence_span.set_attribute("aegis.index_present", indexed)
             if not indexed:
                 await asyncio.sleep(2.5)
             documents = list(products.find({"search_text": q}, {"_id": 0}).limit(20))

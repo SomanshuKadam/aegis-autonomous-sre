@@ -1,0 +1,17 @@
+.git
+.agents
+.specify
+.codex-runtime
+.env
+.env.*
+**/auth.json
+node_modules
+dist
+coverage
+__pycache__
+*.pyc
+*.log
+*.analysis.json
+*.remediation.json
+n8n-data
+mongodb-data

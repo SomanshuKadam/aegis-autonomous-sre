@@ -95,6 +95,7 @@ class IncidentStore:
             "verifications": [_document(record) for record in self.db["verifications"].find({"incident_id": incident_id})],
             "rollbacks": [_document(record) for record in self.db["rollbacks"].find({"incident_id": incident_id})],
             "notifications": [_document(record) for record in self.db["notifications"].find({"incident_id": incident_id})],
+            "agent_runs": [_document(record) for record in self.db["agent_runs"].find({"incident_id": incident_id})],
         }
 
     def advance(self, incident_id: str, target: str, command_id: str, *, actor: str = "orchestrator", reason: str = "") -> dict[str, object]:

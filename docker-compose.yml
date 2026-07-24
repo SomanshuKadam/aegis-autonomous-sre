@@ -76,12 +76,15 @@ services:
   inventory:
     build:
       context: ./app
-    command: ["uvicorn", "aegis.inventory.main:app", "--host", "0.0.0.0", "--port", "8082"]
+    command: ["opentelemetry-instrument", "uvicorn", "aegis.inventory.main:app", "--host", "0.0.0.0", "--port", "8082"]
     restart: unless-stopped
     environment:
       MONGODB_URI: mongodb://${MONGO_ROOT_USERNAME:-aegisadmin}:${MONGO_ROOT_PASSWORD:?MONGO_ROOT_PASSWORD must be set}@mongodb:27017/${MONGO_DATABASE:-mydatabase}?authSource=admin
       MONGO_DATABASE: ${MONGO_DATABASE:-mydatabase}
       OTEL_SERVICE_NAME: aegis-inventory
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://host.docker.internal:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=local,service.version=1.0.0
       AEGIS_MUTATION_CAPABILITY: none
       AEGIS_RUNNER_TOKEN: ${AEGIS_RUNNER_TOKEN:?AEGIS_RUNNER_TOKEN must be set}
     depends_on:
@@ -92,6 +95,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    extra_hosts:
+      - host.docker.internal:host-gateway
     networks: [aegis]
     deploy:
       resources:
@@ -101,12 +106,15 @@ services:
   worker:
     build:
       context: ./app
-    command: ["uvicorn", "aegis.worker.main:app", "--host", "0.0.0.0", "--port", "8083"]
+    command: ["opentelemetry-instrument", "uvicorn", "aegis.worker.main:app", "--host", "0.0.0.0", "--port", "8083"]
     restart: unless-stopped
     environment:
       MONGODB_URI: mongodb://${MONGO_ROOT_USERNAME:-aegisadmin}:${MONGO_ROOT_PASSWORD:?MONGO_ROOT_PASSWORD must be set}@mongodb:27017/${MONGO_DATABASE:-mydatabase}?authSource=admin
       MONGO_DATABASE: ${MONGO_DATABASE:-mydatabase}
       OTEL_SERVICE_NAME: aegis-worker
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://host.docker.internal:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=local,service.version=1.0.0
       AEGIS_API_URL: http://api:8081
       AEGIS_MUTATION_CAPABILITY: none
       AEGIS_RUNNER_TOKEN: ${AEGIS_RUNNER_TOKEN:?AEGIS_RUNNER_TOKEN must be set}
@@ -118,6 +126,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    extra_hosts:
+      - host.docker.internal:host-gateway
     networks: [aegis]
     deploy:
       resources:
@@ -127,12 +137,15 @@ services:
   workload:
     build:
       context: ./app
-    command: ["uvicorn", "aegis.workload.main:app", "--host", "0.0.0.0", "--port", "8084"]
+    command: ["opentelemetry-instrument", "uvicorn", "aegis.workload.main:app", "--host", "0.0.0.0", "--port", "8084"]
     restart: unless-stopped
     environment:
       MONGODB_URI: mongodb://${MONGO_ROOT_USERNAME:-aegisadmin}:${MONGO_ROOT_PASSWORD:?MONGO_ROOT_PASSWORD must be set}@mongodb:27017/${MONGO_DATABASE:-mydatabase}?authSource=admin
       MONGO_DATABASE: ${MONGO_DATABASE:-mydatabase}
       OTEL_SERVICE_NAME: aegis-workload
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://host.docker.internal:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=local,service.version=1.0.0
       AEGIS_API_URL: http://api:8081
       AEGIS_NORMAL_WORKLOAD_ENABLED: ${AEGIS_NORMAL_WORKLOAD_ENABLED:-true}
       AEGIS_WORKLOAD_STATE_PATH: /state/runs.json
@@ -146,6 +159,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    extra_hosts:
+      - host.docker.internal:host-gateway
     networks: [aegis]
     volumes:
       - workload-data:/state
@@ -157,13 +172,16 @@ services:
   workload-demo:
     build:
       context: ./app
-    command: ["uvicorn", "aegis.workload.main:app", "--host", "0.0.0.0", "--port", "8084"]
+    command: ["opentelemetry-instrument", "uvicorn", "aegis.workload.main:app", "--host", "0.0.0.0", "--port", "8084"]
     profiles: [demo]
     restart: "no"
     environment:
       MONGODB_URI: mongodb://${MONGO_ROOT_USERNAME:-aegisadmin}:${MONGO_ROOT_PASSWORD:?MONGO_ROOT_PASSWORD must be set}@mongodb:27017/${MONGO_DATABASE:-mydatabase}?authSource=admin
       MONGO_DATABASE: ${MONGO_DATABASE:-mydatabase}
       OTEL_SERVICE_NAME: aegis-workload-demo
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://host.docker.internal:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=local,service.version=1.0.0
       AEGIS_API_URL: http://api:8081
       AEGIS_NORMAL_WORKLOAD_ENABLED: "false"
       AEGIS_DEMO_WORKLOAD_ENABLED: "true"
@@ -175,17 +193,22 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
+    extra_hosts:
+      - host.docker.internal:host-gateway
     networks: [aegis]
 
   action-runner:
     build:
       context: ./app
-    command: ["uvicorn", "aegis.runner.main:app", "--host", "0.0.0.0", "--port", "8085"]
+    command: ["opentelemetry-instrument", "uvicorn", "aegis.runner.main:app", "--host", "0.0.0.0", "--port", "8085"]
     restart: unless-stopped
     environment:
       MONGODB_URI: mongodb://${MONGO_ROOT_USERNAME:-aegisadmin}:${MONGO_ROOT_PASSWORD:?MONGO_ROOT_PASSWORD must be set}@mongodb:27017/${MONGO_DATABASE:-mydatabase}?authSource=admin
       MONGO_DATABASE: ${MONGO_DATABASE:-mydatabase}
       OTEL_SERVICE_NAME: aegis-action-runner
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://host.docker.internal:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=local,service.version=1.0.0
       AEGIS_MUTATION_CAPABILITY: runner
       AEGIS_RUNNER_TOKEN: ${AEGIS_RUNNER_TOKEN:?AEGIS_RUNNER_TOKEN must be set}
     depends_on:
@@ -196,6 +219,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    extra_hosts:
+      - host.docker.internal:host-gateway
     networks: [aegis]
     deploy:
       resources:

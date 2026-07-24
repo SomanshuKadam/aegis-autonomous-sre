@@ -1,28 +1,63 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
+  "additionalProperties": false,
   "properties": {
-    "trace_id": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
-    "diagnosis": { "type": "string" },
-    "evidence": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
-    "database": { "type": "string", "const": "mydatabase" },
-    "collection": { "type": "string", "const": "mycollection" },
-    "field": { "type": "string", "const": "searchField" },
-    "recommended_command": {
+    "incident_id": {
       "type": "string",
-      "const": "docker exec mongodb sh /opt/aegis/mongodb-index.sh create"
+      "pattern": "^[0-9a-f]{32}$"
     },
-    "safe_to_remediate": { "type": "boolean" }
+    "trace_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "category": {
+      "enum": [
+        "catalog_search",
+        "inventory_dependency",
+        "order_backlog"
+      ]
+    },
+    "diagnosis": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1200
+    },
+    "plausible_solution": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1200
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500
+      }
+    },
+    "selected_action": {
+      "enum": [
+        "mongo.create_search_index@1",
+        "inventory.restore_capacity@1",
+        "worker.set_capacity@1",
+        "none"
+      ]
+    },
+    "safe_to_proceed": {
+      "type": "boolean"
+    }
   },
   "required": [
+    "incident_id",
     "trace_id",
+    "category",
     "diagnosis",
+    "plausible_solution",
     "evidence",
-    "database",
-    "collection",
-    "field",
-    "recommended_command",
-    "safe_to_remediate"
-  ],
-  "additionalProperties": false
+    "selected_action",
+    "safe_to_proceed"
+  ]
 }
