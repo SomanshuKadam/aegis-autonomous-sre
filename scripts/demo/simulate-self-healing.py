@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import time
+from pathlib import Path
 from secrets import token_hex
 from uuid import uuid4
 
@@ -37,7 +38,11 @@ def create_order(sequence: int) -> tuple[int, str]:
     return response.status_code, trace_id
 
 
-def catalog_condition(client: httpx.Client) -> tuple[str, str, dict[str, str]]:
+LoadControl = tuple[subprocess.Popen[bytes], Path]
+Condition = tuple[str, str, dict[str, str], LoadControl | None]
+
+
+def catalog_condition(client: httpx.Client) -> Condition:
     mongo = MongoClient(os.environ["MONGODB_URI"], serverSelectionTimeoutMS=5000)
     products = mongo[os.getenv("MONGO_DATABASE", "mydatabase")]["products"]
     if "search_text_1" in products.index_information():
@@ -54,10 +59,11 @@ def catalog_condition(client: httpx.Client) -> tuple[str, str, dict[str, str]]:
             "collection": "products",
             "field": "search_text",
         },
+        None,
     )
 
 
-def inventory_condition(_: httpx.Client) -> tuple[str, str, dict[str, str]]:
+def inventory_condition(_: httpx.Client) -> Condition:
     health = httpx.get("http://inventory:8082/health", timeout=10).json()
     mongo = MongoClient(os.environ["MONGODB_URI"], serverSelectionTimeoutMS=5000)
     executions = mongo[os.getenv("MONGO_DATABASE", "mydatabase")]["runner_executions"]
@@ -102,27 +108,28 @@ def inventory_condition(_: httpx.Client) -> tuple[str, str, dict[str, str]]:
         headers={"traceparent": traceparent(failed[0])},
         timeout=10,
     ).raise_for_status()
-    subprocess.Popen(
-        [sys.executable, __file__, "_inventory_load"],
+    stop_path = Path(f"/tmp/aegis-inventory-load-{uuid4().hex}.stop")
+    process = subprocess.Popen(
+        [sys.executable, __file__, "_inventory_load", str(stop_path)],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
-    return "inventory_dependency", failed[0], {"type": "inventory_dependency"}
+    return "inventory_dependency", failed[0], {"type": "inventory_dependency"}, (process, stop_path)
 
 
-def sustain_inventory_load() -> None:
-    deadline = time.monotonic() + 105
+def sustain_inventory_load(stop_path: Path) -> None:
+    deadline = time.monotonic() + 600
     sequence = 1000
-    while time.monotonic() < deadline:
+    while time.monotonic() < deadline and not stop_path.exists():
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
             list(pool.map(create_order, range(sequence, sequence + 3)))
         sequence += 3
         time.sleep(1.5)
 
 
-def backlog_condition(client: httpx.Client) -> tuple[str, str, dict[str, str]]:
+def backlog_condition(client: httpx.Client) -> Condition:
     worker = client.get("http://worker:8083/health").json()
     mongo = MongoClient(os.environ["MONGODB_URI"], serverSelectionTimeoutMS=5000)
     executions = mongo[os.getenv("MONGO_DATABASE", "mydatabase")]["runner_executions"]
@@ -176,7 +183,36 @@ def backlog_condition(client: httpx.Client) -> tuple[str, str, dict[str, str]]:
         "http://worker:8083/health",
         headers={"traceparent": traceparent(traces[-1])},
     ).raise_for_status()
-    return "order_backlog", traces[-1], {"type": "order_worker"}
+    return "order_backlog", traces[-1], {"type": "order_worker"}, None
+
+
+def stop_inventory_load(control: LoadControl | None) -> None:
+    if control is None:
+        return
+    process, stop_path = control
+    stop_path.touch()
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        process.terminate()
+        process.wait(timeout=5)
+    stop_path.unlink(missing_ok=True)
+
+
+def wait_for_inventory_decision(client: httpx.Client, incident_id: str, control: LoadControl) -> str:
+    deadline = time.monotonic() + 360
+    terminal = {"APPROVAL_REQUIRED", "RESOLVED", "BLOCKED", "ESCALATED", "FAILED", "ROLLED_BACK"}
+    process, _ = control
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError("inventory pressure worker exited before the workflow reached its decision gate")
+        response = client.get(f"{API_URL}/api/v1/orchestration/incidents/{incident_id}")
+        response.raise_for_status()
+        state = str(response.json()["state"])
+        if state in terminal:
+            return state
+        time.sleep(2)
+    raise RuntimeError("inventory workflow did not reach approval or a terminal state within 360 seconds")
 
 
 def find_incident(client: httpx.Client, fingerprint: str) -> dict[str, object]:
@@ -194,7 +230,9 @@ def find_incident(client: httpx.Client, fingerprint: str) -> dict[str, object]:
 def main() -> None:
     scenario = sys.argv[1].lower() if len(sys.argv) > 1 else "catalog"
     if scenario == "_inventory_load":
-        sustain_inventory_load()
+        if len(sys.argv) != 3:
+            raise SystemExit("inventory load worker requires a stop-file path")
+        sustain_inventory_load(Path(sys.argv[2]))
         return
     if scenario not in SCENARIOS:
         raise SystemExit("usage: simulate-self-healing.py catalog|inventory|backlog")
@@ -204,29 +242,41 @@ def main() -> None:
         "backlog": backlog_condition,
     }
     with httpx.Client(timeout=30) as client:
-        category, trace_id, target = factories[scenario](client)
-        fingerprint = f"aegis-{scenario}-{uuid4().hex}"
-        print(f"condition-created scenario={scenario} trace={trace_id}", flush=True)
-        print("waiting 12 seconds for telemetry ingestion before notifying n8n", flush=True)
-        time.sleep(12)
-        alert = client.post(
-            f"{N8N_URL}/webhook/aegis-lifecycle-alert",
-            json={
-                "status": "firing",
-                "alert_name": {
-                    "catalog": "Catalog search P95 exceeded 2 seconds",
-                    "inventory": "Inventory dependency error rate exceeded threshold",
-                    "backlog": "Order queue oldest age exceeded 30 seconds",
-                }[scenario],
-                "fingerprint": fingerprint,
-                "category": category,
-                "target": target,
-                "trace_id": trace_id,
-            },
-        )
-        alert.raise_for_status()
-        incident = find_incident(client, fingerprint)
+        load_control: LoadControl | None = None
+        try:
+            category, trace_id, target, load_control = factories[scenario](client)
+            fingerprint = f"aegis-{scenario}-{uuid4().hex}"
+            print(f"condition-created scenario={scenario} trace={trace_id}", flush=True)
+            print("waiting 12 seconds for telemetry ingestion before notifying n8n", flush=True)
+            time.sleep(12)
+            alert = client.post(
+                f"{N8N_URL}/webhook/aegis-lifecycle-alert",
+                json={
+                    "status": "firing",
+                    "alert_name": {
+                        "catalog": "Catalog search P95 exceeded 2 seconds",
+                        "inventory": "Inventory dependency error rate exceeded threshold",
+                        "backlog": "Order queue oldest age exceeded 30 seconds",
+                    }[scenario],
+                    "fingerprint": fingerprint,
+                    "category": category,
+                    "target": target,
+                    "trace_id": trace_id,
+                },
+            )
+            alert.raise_for_status()
+            incident = find_incident(client, fingerprint)
+            if scenario == "inventory":
+                if load_control is None:
+                    raise RuntimeError("inventory scenario did not start its pressure worker")
+                final_state = wait_for_inventory_decision(client, str(incident["incident_id"]), load_control)
+            else:
+                final_state = str(incident["state"])
+        finally:
+            stop_inventory_load(load_control)
     print(f"workflow-started incident={incident['incident_id']} trace={trace_id}")
+    if scenario == "inventory":
+        print(f"inventory-gate-state={final_state}")
     print(f"open=http://localhost:3000/ops/incidents/{incident['incident_id']}")
     print("watch Slack for detection, Codex diagnosis, remediation plan, and verified outcome")
 
