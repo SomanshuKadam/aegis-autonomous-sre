@@ -96,7 +96,15 @@ call `localhost` or a Docker service name.
    SLACK_SIGNING_SECRET=replace-with-the-signing-secret
    ```
 
-2. Expose local API port `8081` through an HTTPS tunnel, for example `ngrok http 8081`.
+2. Expose local API port `8081` through an HTTPS tunnel. A Cloudflare quick tunnel can be started
+   from Windows with:
+
+   ```powershell
+   cloudflared tunnel --url http://127.0.0.1:8081
+   ```
+
+   Use the IPv4 loopback address shown above. It avoids `localhost` resolving to an unavailable
+   IPv6 listener after WSL or Docker restarts.
 
 3. In Slack, open **Interactivity & Shortcuts**, enable it, and set **Request URL** to:
 
@@ -105,10 +113,24 @@ call `localhost` or a Docker service name.
    ```
 
 4. Save the Slack configuration, then recreate the API container so it reads the Signing Secret.
+   Cloudflare quick-tunnel hostnames are temporary. Whenever the tunnel restarts, copy its new
+   `https://...trycloudflare.com` hostname into Slack's Request URL.
 
 The API verifies Slack's request signature and forwards only the exact incident and approval IDs
-embedded in the Block Kit action to the internal n8n approval-resume workflow. The original Slack
-card is replaced with the recorded decision, and n8n posts the verified outcome afterward.
+embedded in the Block Kit action to the internal n8n approval-resume workflow. It acknowledges a
+valid button click immediately so Slack receives a response within its fixed three-second window.
+The original Slack card is replaced with the recorded decision, and n8n posts the verified outcome
+afterward.
+
+An approval is valid for 15 minutes. If nobody decides within that window, Aegis expires the
+approval, moves the incident to `ESCALATED`, posts an **Approval expired** card, and records that no
+system change was made. The expired approval ID can never execute a remediation.
+
+The expiry card's **Reopen approval** button creates a new 15-minute approval attempt for the same
+unchanged proposal. The new attempt has a different immutable approval ID; the expired attempt
+remains in the incident timeline. Approve or reject the new card normally. A successful approval
+runs the bounded action once, verifies the result, resolves the incident, and posts the formatted
+resolution to Slack.
 
 Never commit `.env`, authentication material, webhook URLs, or generated SigNoz resources. The
 only runtime component with mutation capability is the restricted action runner, and every action
