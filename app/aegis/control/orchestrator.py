@@ -141,6 +141,43 @@ class IncidentOrchestrator:
     def reconcile_expired_approvals(self) -> list[dict[str, str]]:
         return self.approvals.reconcile_expired()
 
+    def reopen_approval(
+        self,
+        incident_id: str,
+        expired_approval_id: str,
+        approver: str,
+    ) -> OrchestrationResult:
+        incident = self.incidents.get(incident_id)
+        if (
+            incident["state"] != IncidentState.ESCALATED.value
+            or incident.get("escalation_reason") != "approval_expired"
+            or incident.get("expired_approval_id") != expired_approval_id
+        ):
+            raise ValueError("incident is not eligible for approval reopening")
+        proposals = self.incidents.records(incident_id)["proposals"]
+        if not proposals:
+            raise ValueError("approval reopening requires the original proposal")
+        approval = self.approvals.reopen(incident_id, expired_approval_id, proposals[-1])
+        try:
+            reopened = self.incidents.reopen_expired_approval(
+                incident_id,
+                expired_approval_id,
+                utc_now(),
+            )
+        except ValueError:
+            self.approvals.cancel(
+                str(approval["approval_id"]),
+                "Approval attempt cancelled because the incident could not be reopened",
+            )
+            raise
+        reopened["approval"] = approval
+        reopened["reopened_by"] = approver
+        return OrchestrationResult(
+            reopened,
+            IncidentState.APPROVAL_REQUIRED.value,
+            f"await approval {approval['approval_id']}",
+        )
+
     def _record_terminal_notification(self, result: OrchestrationResult) -> OrchestrationResult:
         state = IncidentState(str(result.incident["state"]))
         if state not in TERMINAL:

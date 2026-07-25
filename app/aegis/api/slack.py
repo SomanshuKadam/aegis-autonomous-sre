@@ -19,8 +19,9 @@ router = APIRouter(tags=["slack"])
 logger = logging.getLogger(__name__)
 _MAX_SIGNATURE_AGE_SECONDS = 300
 _ACTIONS = {
-    "aegis_approval_approve": "APPROVED",
-    "aegis_approval_reject": "REJECTED",
+    "aegis_approval_approve": ("DECIDE", "APPROVED"),
+    "aegis_approval_reject": ("DECIDE", "REJECTED"),
+    "aegis_approval_reopen": ("REOPEN", ""),
 }
 
 
@@ -70,7 +71,7 @@ async def handle_interaction(
     try:
         payload = json.loads(encoded["payload"][0])
         action = payload["actions"][0]
-        decision = _ACTIONS[str(action["action_id"])]
+        operation, decision = _ACTIONS[str(action["action_id"])]
         reference = json.loads(str(action["value"]))
         incident_id = str(reference["incident_id"])
         approval_id = str(reference["approval_id"])
@@ -81,14 +82,24 @@ async def handle_interaction(
     user = payload.get("user", {})
     approver = str(user.get("username") or user.get("name") or user.get("id") or "slack-operator")
     forward_payload = {
-        "operation": "DECIDE",
+        "operation": operation,
         "incident_id": incident_id,
         "approval_id": approval_id,
         "approver": approver,
-        "decision": decision,
     }
+    if operation == "DECIDE":
+        forward_payload["decision"] = decision
     forward_url = get_settings().slack_interaction_forward_url
     background_tasks.add_task(_forward_interaction, forward_url, forward_payload)
+    if operation == "REOPEN":
+        return JSONResponse({
+            "replace_original": True,
+            "text": f"Aegis approval reopen request received from {approver}",
+            "blocks": [
+                {"type": "section", "text": {"type": "mrkdwn", "text": f"*Reopen request received*\n<@{user.get('id', approver)}> requested a fresh approval window for incident `{incident_id}`."}},
+                {"type": "context", "elements": [{"type": "mrkdwn", "text": "Aegis is validating the unchanged proposal and will post a new approval card."}]},
+            ],
+        })
     verb = "approved" if decision == "APPROVED" else "rejected"
     return JSONResponse({
         "replace_original": True,

@@ -124,6 +124,23 @@ def approve_incident(incident_id: str, payload: dict = Body(...)) -> dict[str, o
     result = orchestrator.approve(incident_id, str(payload["approval_id"]), str(payload.get("approver", "operator")), str(payload.get("decision", "APPROVED")))
     return {"incident_id": result.incident["incident_id"], "state": result.incident["state"], "outcome": result.outcome, "next_step": result.next_step}
 
+@router.post("/incidents/{incident_id}/reopen-approval", dependencies=[Depends(require_operator)])
+def reopen_incident_approval(incident_id: str, payload: dict = Body(...)) -> dict[str, object]:
+    result = orchestrator.reopen_approval(
+        incident_id,
+        str(payload["approval_id"]),
+        str(payload.get("approver", "operator")),
+    )
+    approval = dict(result.incident["approval"])
+    return {
+        "incident_id": result.incident["incident_id"],
+        "state": result.incident["state"],
+        "outcome": result.outcome,
+        "next_step": result.next_step,
+        "approval_id": approval["approval_id"],
+        "expires_at": approval["expires_at"],
+    }
+
 @router.post("/execute", dependencies=[Depends(require_operator)])
 def execute(payload: dict = Body(...)) -> dict[str, object]:
     approvals.consume(str(payload["approval_id"]), payload["proposal"])

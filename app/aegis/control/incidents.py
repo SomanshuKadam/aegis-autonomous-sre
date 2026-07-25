@@ -159,6 +159,45 @@ class IncidentStore:
         )
         return True
 
+    def reopen_expired_approval(
+        self,
+        incident_id: str,
+        expired_approval_id: str,
+        occurred_at: datetime,
+    ) -> dict[str, object]:
+        result = self.incidents.find_one_and_update(
+            {
+                "incident_id": incident_id,
+                "state": IncidentState.ESCALATED.value,
+                "escalation_reason": "approval_expired",
+                "expired_approval_id": expired_approval_id,
+            },
+            {
+                "$set": {
+                    "state": IncidentState.APPROVAL_REQUIRED.value,
+                    "updated_at": occurred_at,
+                },
+                "$unset": {
+                    "escalation_reason": "",
+                    "expired_approval_id": "",
+                },
+                "$inc": {"timeline_sequence": 1, "version": 1},
+            },
+            return_document=True,
+        )
+        if result is None:
+            raise ValueError("incident is not eligible for approval reopening")
+        self._append(
+            incident_id,
+            IncidentState.APPROVAL_REQUIRED.value,
+            "lifecycle",
+            "reopened",
+            "Operator reopened a fresh approval window for the unchanged proposal",
+            occurred_at,
+            "operator",
+        )
+        return _document(result)
+
     def records(self, incident_id: str) -> dict[str, list[dict[str, object]]]:
         return {
             "timeline": [_document(record) for record in self.timeline.find({"incident_id": incident_id}).sort("sequence", ASCENDING)],

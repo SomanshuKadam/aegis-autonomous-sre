@@ -88,6 +88,15 @@ class ApprovalStore:
         for approval in self.collection.find({"state": "EXPIRED"}):
             incident_id = str(approval["incident_id"])
             approval_id = str(approval["approval_id"])
+            latest = self.collection.find_one(
+                {
+                    "incident_id": incident_id,
+                    "proposal_hash": approval["proposal_hash"],
+                },
+                sort=[("attempt", -1), ("created_at", -1)],
+            )
+            if latest is None or str(latest["approval_id"]) != approval_id:
+                continue
             occurred_at = approval.get("expired_at") or now
             if self.incidents.escalate_expired_approval(incident_id, approval_id, occurred_at):
                 events.append(
@@ -98,6 +107,89 @@ class ApprovalStore:
                     }
                 )
         return events
+
+    def reopen(
+        self,
+        incident_id: str,
+        expired_approval_id: str,
+        proposal: dict[str, object],
+        ttl_minutes: int = 15,
+    ) -> dict[str, object]:
+        previous = self.collection.find_one(
+            {
+                "approval_id": expired_approval_id,
+                "incident_id": incident_id,
+                "state": "EXPIRED",
+            }
+        )
+        proposal_hash = self._proposal_hash(proposal)
+        if (
+            previous is None
+            or previous["proposal_id"] != proposal["proposal_id"]
+            or previous["proposal_hash"] != proposal_hash
+            or previous["evidence_version"] != proposal["evidence_version"]
+        ):
+            raise ValueError("expired approval does not match the current proposal and evidence")
+        existing = self.collection.find_one(
+            {
+                "incident_id": incident_id,
+                "proposal_hash": proposal_hash,
+                "state": "PENDING",
+                "expires_at": {"$gte": utc_now()},
+            },
+            sort=[("attempt", -1), ("created_at", -1)],
+        )
+        if existing is not None:
+            existing.pop("_id", None)
+            return existing
+        latest = self.collection.find_one(
+            {"incident_id": incident_id, "proposal_hash": proposal_hash},
+            sort=[("attempt", -1), ("created_at", -1)],
+        )
+        attempt = int(latest.get("attempt", 1) if latest else 0) + 1
+        now = utc_now()
+        record = {
+            "approval_id": new_id(),
+            "incident_id": incident_id,
+            "proposal_id": proposal["proposal_id"],
+            "proposal_hash": proposal_hash,
+            "evidence_version": proposal["evidence_version"],
+            "attempt": attempt,
+            "state": "PENDING",
+            "expires_at": now + timedelta(minutes=ttl_minutes),
+            "created_at": now,
+            "reopened_from": expired_approval_id,
+        }
+        self.collection.insert_one(record)
+        self.incidents._append(
+            incident_id,
+            "approval",
+            "approval",
+            "pending",
+            "Fresh approval request recorded for the unchanged proposal",
+            now,
+            "operator",
+        )
+        record.pop("_id", None)
+        return record
+
+    def cancel(self, approval_id: str, reason: str) -> None:
+        now = utc_now()
+        record = self.collection.find_one_and_update(
+            {"approval_id": approval_id, "state": "PENDING"},
+            {"$set": {"state": "CANCELLED", "cancelled_at": now, "cancel_reason": reason}},
+            return_document=True,
+        )
+        if record is not None:
+            self.incidents._append(
+                str(record["incident_id"]),
+                "approval",
+                "approval",
+                "cancelled",
+                reason,
+                now,
+                "system",
+            )
 
     def consume(self, incident_id: str, approval_id: str, proposal: dict[str, object], approver: str, decision: str) -> dict[str, object]:
         record = self.collection.find_one({"approval_id": approval_id, "incident_id": incident_id})
