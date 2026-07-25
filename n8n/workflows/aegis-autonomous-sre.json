@@ -267,7 +267,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const d=$json; const run=(d.agent_runs??[]).at(-1)??{}; const execution=(d.executions??[]).at(-1)??{}; const verification=(d.verifications??[]).at(-1)??{}; const approval=(d.approvals??[]).at(-1)??{}; const resolved=d.state==='RESOLVED'; const awaitingApproval=d.state==='APPROVAL_REQUIRED'; const blocked=['BLOCKED','ESCALATED','FAILED'].includes(d.state); const title=resolved?'Aegis Resolution':awaitingApproval?'Approval Required':blocked?'Aegis Safely Stopped':'Aegis Update'; const timeline={type:'button',text:{type:'plain_text',text:'Open incident timeline',emoji:true},url:'http://localhost:3000/ops/incidents/'+d.incident_id}; if(resolved) timeline.style='primary'; const actions=[timeline]; if(awaitingApproval&&approval.approval_id){const value=JSON.stringify({incident_id:d.incident_id,approval_id:approval.approval_id}); actions.unshift({type:'button',action_id:'aegis_approval_approve',text:{type:'plain_text',text:'Approve remediation',emoji:true},style:'primary',value,confirm:{title:{type:'plain_text',text:'Approve remediation',emoji:true},text:{type:'mrkdwn',text:'Approve the exact bounded action `'+(run.selected_action??'none')+'` for this incident?'},confirm:{type:'plain_text',text:'Approve',emoji:true},deny:{type:'plain_text',text:'Cancel',emoji:true}}},{type:'button',action_id:'aegis_approval_reject',text:{type:'plain_text',text:'Reject remediation',emoji:true},style:'danger',value,confirm:{title:{type:'plain_text',text:'Reject remediation',emoji:true},text:{type:'mrkdwn',text:'Reject the proposed action and stop this remediation?'},confirm:{type:'plain_text',text:'Reject',emoji:true},deny:{type:'plain_text',text:'Cancel',emoji:true}}});} return [{json:{text:'Aegis incident '+d.incident_id+' reached '+d.state,blocks:[{type:'header',text:{type:'plain_text',text:title,emoji:true}},{type:'section',fields:[{type:'mrkdwn',text:'*State*\\n'+d.state},{type:'mrkdwn',text:'*Category*\\n'+d.category},{type:'mrkdwn',text:'*Codex action*\\n`'+(run.selected_action??'none')+'`'},{type:'mrkdwn',text:'*Execution*\\n'+(execution.state??(approval.state?'Waiting for '+approval.state:'Not executed'))}]},{type:'section',text:{type:'mrkdwn',text:'*Diagnosis*\\n'+(run.diagnosis??'No diagnosis recorded')+'\\n\\n*Verification*\\n'+(verification.outcome??(awaitingApproval?'Pending explicit approval':'No verification performed'))}},{type:'context',elements:[{type:'mrkdwn',text:'Trace `'+(d.trace_id??'unavailable')+'` • Incident `'+d.incident_id+'`'}]},{type:'actions',elements:actions}]}}];"
+        "jsCode": "const d=$json; const run=(d.agent_runs??[]).at(-1)??{}; const execution=(d.executions??[]).at(-1)??{}; const verification=(d.verifications??[]).at(-1)??{}; const approval=(d.approvals??[]).at(-1)??{}; const resolved=d.state==='RESOLVED'; const awaitingApproval=d.state==='APPROVAL_REQUIRED'; const approvalExpired=d.state==='ESCALATED'&&approval.state==='EXPIRED'; const blocked=['BLOCKED','ESCALATED','FAILED'].includes(d.state); const title=resolved?'Aegis Resolution':awaitingApproval?'Approval Required':approvalExpired?'Approval Expired':blocked?'Aegis Safely Stopped':'Aegis Update'; const timeline={type:'button',text:{type:'plain_text',text:'Open incident timeline',emoji:true},url:'http://localhost:3000/ops/incidents/'+d.incident_id}; if(resolved) timeline.style='primary'; const actions=[timeline]; if(awaitingApproval&&approval.approval_id){const value=JSON.stringify({incident_id:d.incident_id,approval_id:approval.approval_id}); actions.unshift({type:'button',action_id:'aegis_approval_approve',text:{type:'plain_text',text:'Approve remediation',emoji:true},style:'primary',value,confirm:{title:{type:'plain_text',text:'Approve remediation',emoji:true},text:{type:'mrkdwn',text:'Approve the exact bounded action `'+(run.selected_action??'none')+'` for this incident?'},confirm:{type:'plain_text',text:'Approve',emoji:true},deny:{type:'plain_text',text:'Cancel',emoji:true}}},{type:'button',action_id:'aegis_approval_reject',text:{type:'plain_text',text:'Reject remediation',emoji:true},style:'danger',value,confirm:{title:{type:'plain_text',text:'Reject remediation',emoji:true},text:{type:'mrkdwn',text:'Reject the proposed action and stop this remediation?'},confirm:{type:'plain_text',text:'Reject',emoji:true},deny:{type:'plain_text',text:'Cancel',emoji:true}}});} if(approvalExpired&&approval.approval_id){const value=JSON.stringify({incident_id:d.incident_id,approval_id:approval.approval_id}); actions.unshift({type:'button',action_id:'aegis_approval_reopen',text:{type:'plain_text',text:'Reopen approval',emoji:true},style:'primary',value,confirm:{title:{type:'plain_text',text:'Reopen approval',emoji:true},text:{type:'mrkdwn',text:'Create a fresh 15-minute approval window for the unchanged bounded proposal?'},confirm:{type:'plain_text',text:'Reopen',emoji:true},deny:{type:'plain_text',text:'Cancel',emoji:true}}});} const executionStatus=approvalExpired?'Not executed':(execution.state??(approval.state?'Waiting for '+approval.state:'Not executed')); const verificationStatus=verification.outcome??(awaitingApproval?'Pending explicit approval':approvalExpired?'Approval expired; no system changes were made':'No verification performed'); return [{json:{text:'Aegis incident '+d.incident_id+' reached '+d.state,blocks:[{type:'header',text:{type:'plain_text',text:title,emoji:true}},{type:'section',fields:[{type:'mrkdwn',text:'*State*\\n'+d.state},{type:'mrkdwn',text:'*Category*\\n'+d.category},{type:'mrkdwn',text:'*Codex action*\\n`'+(run.selected_action??'none')+'`'},{type:'mrkdwn',text:'*Execution*\\n'+executionStatus}]},{type:'section',text:{type:'mrkdwn',text:'*Diagnosis*\\n'+(run.diagnosis??'No diagnosis recorded')+'\\n\\n*Verification*\\n'+verificationStatus}},{type:'context',elements:[{type:'mrkdwn',text:'Trace `'+(d.trace_id??'unavailable')+'` • Incident `'+d.incident_id+'`'}]},{type:'actions',elements:actions}]}}];"
       },
       "id": "prepare-outcome",
       "name": "Prepare Outcome Card",
@@ -326,7 +326,7 @@
     },
     {
       "parameters": {
-        "url": "={{ $env.AEGIS_API_URL + '/api/v1/orchestration/incidents/' + $json.incident_id }}",
+        "url": "={{ $env.AEGIS_API_URL + '/api/v1/orchestration/incidents/' + ($json.incident_id ?? $json.body.incident_id) }}",
         "options": {}
       },
       "id": "fetch-detail",
@@ -395,6 +395,84 @@
     },
     {
       "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "DECIDE",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.body.operation }}",
+                    "rightValue": "DECIDE",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "REOPEN",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.body.operation }}",
+                    "rightValue": "REOPEN",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "EXPIRED",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.body.operation }}",
+                    "rightValue": "EXPIRED",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "route-approval-event",
+      "name": "Route Approval Event",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [1560, 260]
+    },
+    {
+      "parameters": {
         "method": "POST",
         "url": "={{ $env.AEGIS_API_URL + '/api/v1/orchestration/incidents/' + $json.body.incident_id + '/approve' }}",
         "sendHeaders": true,
@@ -415,11 +493,39 @@
           }
         }
       },
-      "id": "resume-approved",
-      "name": "Resume Approved Incident",
+      "id": "decide-approval",
+      "name": "Decide Approval",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1620, 260]
+      "position": [1740, 180]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.AEGIS_API_URL + '/api/v1/orchestration/incidents/' + $json.body.incident_id + '/reopen-approval' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.AEGIS_OPERATOR_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {approval_id:$json.body.approval_id,approver:$json.body.approver ?? 'n8n-approval'} }}",
+        "options": {
+          "retry": {
+            "maxTries": 3
+          }
+        }
+      },
+      "id": "reopen-approval",
+      "name": "Reopen Approval",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1740, 300]
     }
   ],
   "connections": {
@@ -617,8 +723,44 @@
         ]
       ]
     },
-    "Resume Approved Incident": {
+    "Decide Approval": {
       "main": [
+        [
+          {
+            "node": "Fetch Verified Incident",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reopen Approval": {
+      "main": [
+        [
+          {
+            "node": "Fetch Verified Incident",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Approval Event": {
+      "main": [
+        [
+          {
+            "node": "Decide Approval",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reopen Approval",
+            "type": "main",
+            "index": 0
+          }
+        ],
         [
           {
             "node": "Fetch Verified Incident",
@@ -665,7 +807,7 @@
       "main": [
         [
           {
-            "node": "Resume Approved Incident",
+            "node": "Route Approval Event",
             "type": "main",
             "index": 0
           }
