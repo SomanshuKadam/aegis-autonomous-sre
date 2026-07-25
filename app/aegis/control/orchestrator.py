@@ -138,6 +138,9 @@ class IncidentOrchestrator:
             span.set_attribute("aegis.approval.decision", decision)
             return self._record_terminal_notification(self._approve(incident_id, incident, approval_id, approver, decision))
 
+    def reconcile_expired_approvals(self) -> list[dict[str, str]]:
+        return self.approvals.reconcile_expired()
+
     def _record_terminal_notification(self, result: OrchestrationResult) -> OrchestrationResult:
         state = IncidentState(str(result.incident["state"]))
         if state not in TERMINAL:

@@ -113,6 +113,52 @@ class IncidentStore:
             expired.append(incident_id)
         return expired
 
+    def escalate_expired_approval(self, incident_id: str, approval_id: str, occurred_at: datetime) -> bool:
+        """Terminate an unattended approval without executing its proposal."""
+        result = self.incidents.find_one_and_update(
+            {
+                "incident_id": incident_id,
+                "state": IncidentState.APPROVAL_REQUIRED.value,
+            },
+            {
+                "$set": {
+                    "state": IncidentState.ESCALATED.value,
+                    "escalation_reason": "approval_expired",
+                    "expired_approval_id": approval_id,
+                    "updated_at": occurred_at,
+                },
+                "$inc": {"timeline_sequence": 1, "version": 1},
+            },
+            return_document=True,
+        )
+        if result is None:
+            return False
+        reason = "Approval expired without an operator decision; no system changes were made"
+        self._append(
+            incident_id,
+            IncidentState.ESCALATED.value,
+            "lifecycle",
+            "expired",
+            reason,
+            occurred_at,
+            "reconciler",
+        )
+        self.commands.update_one(
+            {"incident_id": incident_id, "command_id": f"approval-expiry-{approval_id}"},
+            {
+                "$setOnInsert": {
+                    "incident_id": incident_id,
+                    "command_id": f"approval-expiry-{approval_id}",
+                    "target_state": IncidentState.ESCALATED.value,
+                    "disposition": "expired",
+                    "actor": "reconciler",
+                    "occurred_at": occurred_at,
+                }
+            },
+            upsert=True,
+        )
+        return True
+
     def records(self, incident_id: str) -> dict[str, list[dict[str, object]]]:
         return {
             "timeline": [_document(record) for record in self.timeline.find({"incident_id": incident_id}).sort("sequence", ASCENDING)],

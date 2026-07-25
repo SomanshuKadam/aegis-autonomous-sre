@@ -1,7 +1,9 @@
 from __future__ import annotations
 import asyncio
+import logging
 import time
 from datetime import datetime, timezone
+import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from aegis.config import get_settings
@@ -10,7 +12,7 @@ from aegis.api.commerce import router as commerce_router
 from aegis.api.operations import create_router as create_operations_router
 from aegis.api.evaluation import router as evaluation_router
 from aegis.api.slack import router as slack_router
-from aegis.api.orchestration import incidents
+from aegis.api.orchestration import incidents, orchestrator
 from opentelemetry import trace
 from pymongo import MongoClient
 from aegis.workload.service import WorkloadService
@@ -24,10 +26,28 @@ def create_app() -> FastAPI:
     app.include_router(evaluation_router)
     app.include_router(slack_router)
     settings = get_settings()
+    logger = logging.getLogger(__name__)
+
+    async def forward_approval_event(payload: dict[str, str]) -> None:
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.post(settings.approval_event_forward_url, json=payload)
+                response.raise_for_status()
+        except httpx.HTTPError:
+            logger.exception(
+                "Approval lifecycle event delivery failed",
+                extra={
+                    "incident_id": payload.get("incident_id"),
+                    "operation": payload.get("operation"),
+                },
+            )
+
     async def reconcile_stale_incidents() -> None:
         while True:
+            for event in orchestrator.reconcile_expired_approvals():
+                await forward_approval_event(event)
             incidents.expire_stale(settings.incident_stale_seconds)
-            await asyncio.sleep(min(settings.incident_stale_seconds, 60))
+            await asyncio.sleep(5)
 
     @app.on_event("startup")
     async def start_stale_incident_reconciler() -> None:

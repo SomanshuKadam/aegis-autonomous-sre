@@ -61,6 +61,7 @@ services:
       AEGIS_SIGNOZ_URL: ${AEGIS_SIGNOZ_URL:-http://localhost:8080}
       SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
       AEGIS_SLACK_INTERACTION_FORWARD_URL: http://n8n:5678/webhook/approval-resume
+      AEGIS_APPROVAL_EVENT_FORWARD_URL: http://n8n:5678/webhook/approval-resume
     ports:
       - "8081:8081"
     extra_hosts:
