@@ -54,17 +54,65 @@ Commerce workload ──OpenTelemetry──> SigNoz
 SigNoz remains the telemetry explorer. The Aegis UI presents the operational lifecycle without
 duplicating trace, log, service, or dashboard exploration.
 
-## Prerequisites
+## Run locally
+
+This is the complete judge setup. Run the shell commands from Linux, macOS, or an Ubuntu WSL2
+terminal. The project was validated with Docker Engine inside Ubuntu WSL2. On Windows, SigNoz
+warns that Docker Desktop's WSL integration can cause ClickHouse Keeper crashes.
+
+### Prerequisites
 
 - Docker Engine with Docker Compose v2
-- WSL2 when running on Windows
-- At least 4 GB available to the SigNoz stack
-- Codex CLI authentication
-- A SigNoz service-account API key
-- A Slack incoming webhook for notifications
-- A Slack signing secret and public HTTPS tunnel only when testing approval buttons
+- Git and `curl`
+- WSL2 with native Docker Engine when running on Windows
+- At least 6 GB of memory available to Docker for SigNoz and the application
+- A ChatGPT account with Codex access or an OpenAI API key
+- A Slack app with an incoming webhook for the complete notification flow
+- A Slack signing secret and `cloudflared` only for the inventory approval buttons
+- Free host ports `3000`, `5678`, `8000`, `8080`, `8081`, `4317`, `4318`, and `27017`
 
-## 1. Start SigNoz
+Confirm Docker is available without `sudo`:
+
+```bash
+docker version
+docker compose version
+```
+
+If `docker ps` cannot reach the daemon inside WSL, start it with:
+
+```bash
+sudo service docker start
+```
+
+### 1. Clone the project
+
+```bash
+git clone https://github.com/SomanshuKadam/aegis-autonomous-sre.git
+cd aegis-autonomous-sre
+```
+
+All remaining commands assume the repository root is the current directory.
+
+### 2. Authenticate Codex
+
+Install the Codex CLI:
+
+```bash
+curl -fsSL https://chatgpt.com/codex/install.sh | sh
+```
+
+Create file-based credentials for the n8n container and complete the browser login:
+
+```bash
+codex -c cli_auth_credentials_store='"file"' login
+codex login status
+test -f "$HOME/.codex/auth.json"
+```
+
+The final command must succeed. `auth.json` is a secret: never commit or share it. The application
+mounts it read-only into n8n so the incident workflow can run Codex non-interactively.
+
+### 3. Deploy SigNoz and its MCP server
 
 Install the SigNoz Foundry CLI:
 
@@ -73,49 +121,87 @@ curl -fsSL https://signoz.io/foundry.sh | bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-Create the local SigNoz stack from the repository casting file:
+Deploy the reproducible stack from the committed casting and lock files:
 
 ```bash
 foundryctl cast -f signoz/casting.yaml
 ```
 
-Open SigNoz at [http://localhost:8080](http://localhost:8080), create a service account, and copy
-its API key.
-
-## 2. Configure Aegis
+Verify the SigNoz UI and Foundry-managed MCP server:
 
 ```bash
-git clone https://github.com/SomanshuKadam/aegis-autonomous-sre.git
-cd aegis-autonomous-sre
-cp .env.example .env
+curl -fsS http://localhost:8080/ >/dev/null && echo "SigNoz UI reachable"
+curl -fsS http://localhost:8000/livez
 ```
 
-Set the required values in `.env`:
+Open [http://localhost:8080](http://localhost:8080), create the first administrator account, then
+open **Settings → Service Accounts** and create an API key. Keep the key for the next step.
+
+Foundry creates the external Docker network named `signoz-network`. The application joins that
+network so Codex can reach the Foundry-managed `signoz-mcp` service.
+
+### 4. Configure the application
+
+```bash
+cp .env.example .env
+printf 'Codex auth path: %s\n' "$HOME/.codex/auth.json"
+printf 'Docker socket group ID: %s\n' \
+  "$(stat -c '%g' /var/run/docker.sock 2>/dev/null || stat -f '%g' /var/run/docker.sock)"
+```
+
+Edit `.env` and replace every placeholder. These values are required for the complete demo:
 
 ```dotenv
 MONGO_ROOT_PASSWORD=<local-password>
 N8N_ENCRYPTION_KEY=<local-encryption-key>
 N8N_PASSWORD=<local-admin-password>
 SIGNOZ_API_KEY=<signoz-service-account-key>
-CODEX_AUTH_FILE=<absolute-wsl-path-to-codex-auth.json>
+CODEX_AUTH_FILE=/home/<your-linux-user>/.codex/auth.json
+DOCKER_GID=<printed-docker-socket-group-id>
 AEGIS_ORCHESTRATOR_TOKEN=<local-random-token>
 AEGIS_OPERATOR_TOKEN=<different-local-random-token>
 AEGIS_RUNNER_TOKEN=<different-local-random-token>
-SLACK_WEBHOOK_URL=<optional-slack-incoming-webhook>
-SLACK_SIGNING_SECRET=<required-only-for-slack-buttons>
+SLACK_WEBHOOK_URL=<slack-incoming-webhook-url>
+SLACK_SIGNING_SECRET=<slack-app-signing-secret>
 ```
 
 Use different values for the three control-plane tokens. They separate orchestration, operator,
-and runner capabilities.
+and runner capabilities. `DOCKER_GID` lets the non-root n8n user invoke the isolated Docker action
+runner through the local socket.
 
-## 3. Start the application
+Generate suitably random local values with `openssl rand -hex 32`. Run it once for the n8n
+encryption key and once for each control-plane token.
+
+To obtain the Slack values:
+
+1. Create or open a Slack app and enable **Incoming Webhooks**.
+2. Add a webhook to the channel that should receive incident cards and copy its URL.
+3. Copy **Basic Information → App Credentials → Signing Secret**.
+
+The webhook is required because each lifecycle stage records its Slack delivery. The signing
+secret is required only when approving or rejecting the inventory remediation from Slack.
+
+### 5. Start Aegis and publish the n8n workflow
 
 ```bash
+docker compose config --quiet
 docker compose up -d --build
-./scripts/import-workflow.sh
+bash scripts/import-workflow.sh
+docker compose ps
 ```
 
-Open:
+The import helper waits for n8n to become ready, imports the committed workflow, and publishes it.
+The application containers should be running, and services with health checks should report
+`healthy`.
+
+Verify the control plane and UI:
+
+```bash
+curl -fsS http://localhost:8081/health
+curl -fsS http://localhost:3000/healthz
+```
+
+Open the local surfaces:
 
 | Surface | URL |
 | --- | --- |
@@ -127,14 +213,14 @@ Open:
 The normal workload creates an order every 30 seconds so traces and service charts continue to
 move when no incident demonstration is running.
 
-## 4. Run the self-healing demonstrations
+### 6. Run a self-healing demonstration
 
 Run one scenario at a time from WSL:
 
 ```bash
-./scripts/demo/simulate-self-healing.sh catalog
-./scripts/demo/simulate-self-healing.sh inventory
-./scripts/demo/simulate-self-healing.sh backlog
+bash scripts/demo/simulate-self-healing.sh catalog
+bash scripts/demo/simulate-self-healing.sh inventory
+bash scripts/demo/simulate-self-healing.sh backlog
 ```
 
 Each command creates a real local failure condition, waits for telemetry ingestion, submits the
@@ -149,7 +235,7 @@ Follow the result in three places:
 ### Catalog
 
 ```bash
-./scripts/demo/simulate-self-healing.sh catalog
+bash scripts/demo/simulate-self-healing.sh catalog
 ```
 
 The scenario removes only the registered search index and generates a slow customer search. The
@@ -159,7 +245,7 @@ threshold before resolution.
 ### Inventory
 
 ```bash
-./scripts/demo/simulate-self-healing.sh inventory
+bash scripts/demo/simulate-self-healing.sh inventory
 ```
 
 Parallel orders exhaust inventory reservation capacity. Codex may propose
@@ -169,7 +255,7 @@ changed until the exact approval is accepted.
 ### Backlog
 
 ```bash
-./scripts/demo/simulate-self-healing.sh backlog
+bash scripts/demo/simulate-self-healing.sh backlog
 ```
 
 The scenario creates enough orders for the oldest queued item to exceed 30 seconds. Capacity is
@@ -185,21 +271,25 @@ docker compose exec -T api python /tmp/backlog-safe-refusal-demo.py
 
 It proves that an unhealthy or maxed worker pool is escalated without execution.
 
-## Slack approval buttons
+### 7. Enable Slack approval buttons
 
-Slack cannot send interactive actions to `localhost`. Start a temporary HTTPS tunnel:
+Slack cannot send interactive actions to `localhost`. Install
+[cloudflared](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/),
+then start a temporary HTTPS tunnel:
 
-```powershell
+```bash
 cloudflared tunnel --url http://127.0.0.1:8081
 ```
 
-In the Slack app, enable **Interactivity & Shortcuts** and set the request URL to:
+Keep that process running. In the Slack app, enable **Interactivity & Shortcuts** and set its
+request URL to:
 
 ```text
 https://<temporary-host>.trycloudflare.com/api/v1/slack/interactions
 ```
 
-After setting `SLACK_SIGNING_SECRET`, recreate the API service:
+Save the Slack setting. If `SLACK_SIGNING_SECRET` was added after the application started,
+recreate only the API service:
 
 ```bash
 docker compose up -d --no-deps --force-recreate api
@@ -210,6 +300,22 @@ n8n resumes the longer remediation asynchronously.
 
 An unanswered approval expires after 15 minutes without executing anything. Reopening it creates
 a new immutable approval identifier while preserving the expired attempt in the incident record.
+
+### Stop the local deployment
+
+Stop the application while preserving its local volumes:
+
+```bash
+docker compose down
+```
+
+Stop the Foundry-rendered SigNoz deployment separately:
+
+```bash
+docker compose -f pours/deployment/compose.yaml down
+```
+
+Do not add `--volumes` unless the local incident and telemetry data should be deleted.
 
 ## Repository layout
 

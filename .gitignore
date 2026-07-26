@@ -26,5 +26,6 @@ coverage/
 *.tsbuildinfo
 /2s*
 /.tmp/
+/pours/
 /docs/
 /specs/
