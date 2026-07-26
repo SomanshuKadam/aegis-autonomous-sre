@@ -25,3 +25,6 @@ coverage/
 *.remediation.json
 *.tsbuildinfo
 /2s*
+/.tmp/
+/docs/
+/specs/
