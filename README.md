@@ -1,77 +1,135 @@
-# Aegis reliability platform
+# Aegis
 
-Aegis is a local commerce application with a bounded reliability control plane. Its operations
-console shows application health and the durable incident lifecycle; SigNoz remains the
-authoritative telemetry explorer and n8n handles alert delivery, approval resume, and notification
-recording.
+Self-healing incident response powered by SigNoz, OpenTelemetry, Codex, n8n, and Slack.
 
-This is a hackathon prototype. It has no automated-test workflow. Validation is intentionally
-limited to production builds, Compose service health, and the manual demonstrations below.
+Aegis turns an observable failure into a controlled recovery:
 
-## Use the UI
+1. SigNoz captures the failing trace and live service evidence.
+2. n8n opens a durable incident and notifies Slack.
+3. Codex investigates through read-only SigNoz MCP access.
+4. Deterministic policy checks the proposed registered action.
+5. Low-risk actions run automatically; higher-risk actions wait for Slack approval.
+6. An isolated runner applies the bounded change.
+7. Fresh business behavior must prove recovery before the incident is resolved.
 
-With the stack already running, open `http://localhost:3000/shop` to browse products and submit a
-normal order. Open `http://localhost:3000/ops` to view live service health, workload activity,
-and historical incidents. Open an incident to inspect its evidence, policy decision, approval,
-execution, verification or rollback, notification status, and authenticated SigNoz context links.
+The included commerce workload exists to produce realistic traces, dependency failures, and queue
+pressure. The main product is the incident workflow around it.
 
-The operations console contains no customer-facing control for manufacturing faults or applying a
-repair. The three bounded demonstrations are reviewer-operated backend walkthroughs.
+## What the demo shows
 
-## Run a manual demonstration
+| Scenario | Signal | Bounded response | Decision |
+| --- | --- | --- | --- |
+| Catalog search | Slow search with the expected MongoDB index absent | Recreate only `products.search_text_1` | Automatic |
+| Inventory dependency | Reservation capacity exhausted and orders returning dependency errors | Restore the recorded safe capacity | Slack approval |
+| Order backlog | Old queued orders, healthy workers, and available headroom | Add one worker-capacity step | Automatic |
+| Unsafe backlog | Workers unhealthy or already at maximum capacity | No mutation | Escalate |
 
-Run these only against the local Compose stack. Each command prints an incident and, where
-available, a trace correlation ID to use in the operations console and SigNoz.
+Every path records detection, investigation, policy, execution, verification, notification, and
+rollback information in an append-only incident timeline.
 
-```bash
-docker compose cp scripts/demo/catalog-auto-recovery-demo.py api:/tmp/catalog-auto-recovery-demo.py
-docker compose exec -T api python /tmp/catalog-auto-recovery-demo.py
+## Architecture
 
-docker compose cp scripts/demo/inventory-approval-demo.py api:/tmp/inventory-approval-demo.py
-docker compose exec -T api python /tmp/inventory-approval-demo.py
-
-docker compose cp scripts/demo/backlog-recovery-demo.py api:/tmp/backlog-recovery-demo.py
-docker compose exec -T api python /tmp/backlog-recovery-demo.py
-
-docker compose cp scripts/demo/backlog-safe-refusal-demo.py api:/tmp/backlog-safe-refusal-demo.py
-docker compose exec -T api python /tmp/backlog-safe-refusal-demo.py
+```text
+Commerce workload ──OpenTelemetry──> SigNoz
+        │                                │
+        │ correlated signal              │ read-only MCP investigation
+        ▼                                ▼
+       n8n ────────────────> Codex structured diagnosis
+        │                                │
+        ├──> Slack                       ▼
+        │                       deterministic policy
+        │                                │
+        │                 ┌──────────────┴──────────────┐
+        │                 │                             │
+        │          automatic action              Slack approval
+        │                 │                             │
+        └─────────────────┴──────────────┬──────────────┘
+                                        ▼
+                               isolated action runner
+                                        │
+                                        ▼
+                              fresh recovery verification
 ```
 
-Catalog recovery grows local demo data, observes a real slow customer search after removing only
-the registered index, then verifies the lifecycle recreates exactly `products.search_text_1`.
-Inventory recovery creates ordinary order pressure, pauses for the exact approval, verifies a
-fresh order, and restores the pre-demo capacity. Backlog recovery adds one bounded worker capacity
-step only when healthy headroom exists; the refusal walkthrough proves an already-maxed worker
-pool is escalated without mutation.
+SigNoz remains the telemetry explorer. The Aegis UI presents the operational lifecycle without
+duplicating trace, log, service, or dashboard exploration.
 
-For an n8n approval resume and notification-recording walkthrough, run:
+## Prerequisites
 
-```bash
-docker compose cp scripts/demo/n8n-approval-resume-demo.py api:/tmp/n8n-approval-resume-demo.py
-docker compose exec -T api python /tmp/n8n-approval-resume-demo.py
-```
+- Docker Engine with Docker Compose v2
+- WSL2 when running on Windows
+- At least 4 GB available to the SigNoz stack
+- Codex CLI authentication
+- A SigNoz service-account API key
+- A Slack incoming webhook for notifications
+- A Slack signing secret and public HTTPS tunnel only when testing approval buttons
 
-If Slack is not configured, the workflow records a failed Slack notification independently while
-the incident’s technical result remains visible in Aegis.
+## 1. Start SigNoz
 
-## Production build and workflow import
+Install the SigNoz Foundry CLI:
 
 ```bash
-npm --prefix frontend run build
-docker compose config --quiet
-docker compose exec -T n8n n8n import:workflow --input=/opt/aegis/workflows/aegis-autonomous-sre.json
-docker compose exec -T n8n n8n publish:workflow --id=aegis-autonomous-lifecycle-v2
+curl -fsSL https://signoz.io/foundry.sh | bash
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
-## Run the self-healing workflow
+Create the local SigNoz stack from the repository casting file:
 
-The commerce application is only the observable workload. The Aegis product is the incident
-workflow: a correlated signal enters n8n, Slack receives the trigger, Codex investigates the
-source trace through read-only SigNoz access, deterministic policy checks the proposed registered
-action, the isolated runner applies it, and a fresh verification result is reported to Slack.
+```bash
+foundryctl cast -f signoz/casting.yaml
+```
 
-From WSL, create one real local condition and submit its correlated signal to the active n8n
-webhook:
+Open SigNoz at [http://localhost:8080](http://localhost:8080), create a service account, and copy
+its API key.
+
+## 2. Configure Aegis
+
+```bash
+git clone https://github.com/SomanshuKadam/aegis-autonomous-sre.git
+cd aegis-autonomous-sre
+cp .env.example .env
+```
+
+Set the required values in `.env`:
+
+```dotenv
+MONGO_ROOT_PASSWORD=<local-password>
+N8N_ENCRYPTION_KEY=<local-encryption-key>
+N8N_PASSWORD=<local-admin-password>
+SIGNOZ_API_KEY=<signoz-service-account-key>
+CODEX_AUTH_FILE=<absolute-wsl-path-to-codex-auth.json>
+AEGIS_ORCHESTRATOR_TOKEN=<local-random-token>
+AEGIS_OPERATOR_TOKEN=<different-local-random-token>
+AEGIS_RUNNER_TOKEN=<different-local-random-token>
+SLACK_WEBHOOK_URL=<optional-slack-incoming-webhook>
+SLACK_SIGNING_SECRET=<required-only-for-slack-buttons>
+```
+
+Use different values for the three control-plane tokens. They separate orchestration, operator,
+and runner capabilities.
+
+## 3. Start the application
+
+```bash
+docker compose up -d --build
+./scripts/import-workflow.sh
+```
+
+Open:
+
+| Surface | URL |
+| --- | --- |
+| Operations overview | [http://localhost:3000/ops](http://localhost:3000/ops) |
+| Workload shop | [http://localhost:3000/shop](http://localhost:3000/shop) |
+| SigNoz | [http://localhost:8080](http://localhost:8080) |
+| n8n | [http://localhost:5678](http://localhost:5678) |
+
+The normal workload creates an order every 30 seconds so traces and service charts continue to
+move when no incident demonstration is running.
+
+## 4. Run the self-healing demonstrations
+
+Run one scenario at a time from WSL:
 
 ```bash
 ./scripts/demo/simulate-self-healing.sh catalog
@@ -79,59 +137,105 @@ webhook:
 ./scripts/demo/simulate-self-healing.sh backlog
 ```
 
-Use `catalog` for the shortest automatic end-to-end demonstration. `inventory` intentionally
-stops at explicit approval because its registered action is medium risk. The script prints the
-source trace and Aegis incident URL; Slack shows detection, Codex diagnosis, the bounded action,
-and the verified outcome as separate cards.
+Each command creates a real local failure condition, waits for telemetry ingestion, submits the
+correlated signal to n8n, and prints the incident and trace identifiers.
 
-## Enable Slack approval buttons
+Follow the result in three places:
 
-For `APPROVAL_REQUIRED` incidents, Slack can show **Approve remediation** and **Reject
-remediation** buttons. Slack must be able to reach the API over a public HTTPS URL; it cannot
-call `localhost` or a Docker service name.
+1. Slack shows detection, Codex diagnosis, the bounded action, and the verified outcome.
+2. The incident page shows the expandable recovery lifecycle.
+3. SigNoz shows the source trace and surrounding telemetry used during investigation.
 
-1. Copy the Slack app's **Signing Secret** from **Basic Information** into the local `.env` file:
+### Catalog
 
-   ```text
-   SLACK_SIGNING_SECRET=replace-with-the-signing-secret
-   ```
+```bash
+./scripts/demo/simulate-self-healing.sh catalog
+```
 
-2. Expose local API port `8081` through an HTTPS tunnel. A Cloudflare quick tunnel can be started
-   from Windows with:
+The scenario removes only the registered search index and generates a slow customer search. The
+runner may recreate that exact index. A fresh search must return below the configured recovery
+threshold before resolution.
 
-   ```powershell
-   cloudflared tunnel --url http://127.0.0.1:8081
-   ```
+### Inventory
 
-   Use the IPv4 loopback address shown above. It avoids `localhost` resolving to an unavailable
-   IPv6 listener after WSL or Docker restarts.
+```bash
+./scripts/demo/simulate-self-healing.sh inventory
+```
 
-3. In Slack, open **Interactivity & Shortcuts**, enable it, and set **Request URL** to:
+Parallel orders exhaust inventory reservation capacity. Codex may propose
+`inventory.restore_capacity@1`, but policy pauses the incident at `APPROVAL_REQUIRED`. Nothing is
+changed until the exact approval is accepted.
 
-   ```text
-   https://your-public-tunnel-host/api/v1/slack/interactions
-   ```
+### Backlog
 
-4. Save the Slack configuration, then recreate the API container so it reads the Signing Secret.
-   Cloudflare quick-tunnel hostnames are temporary. Whenever the tunnel restarts, copy its new
-   `https://...trycloudflare.com` hostname into Slack's Request URL.
+```bash
+./scripts/demo/simulate-self-healing.sh backlog
+```
 
-The API verifies Slack's request signature and forwards only the exact incident and approval IDs
-embedded in the Block Kit action to the internal n8n approval-resume workflow. It acknowledges a
-valid button click immediately so Slack receives a response within its fixed three-second window.
-The original Slack card is replaced with the recorded decision, and n8n posts the verified outcome
-afterward.
+The scenario creates enough orders for the oldest queued item to exceed 30 seconds. Capacity is
+increased by one step only when workers are healthy, below their maximum, and reporting resource
+headroom.
 
-An approval is valid for 15 minutes. If nobody decides within that window, Aegis expires the
-approval, moves the incident to `ESCALATED`, posts an **Approval expired** card, and records that no
-system change was made. The expired approval ID can never execute a remediation.
+The explicit refusal walkthrough is also available:
 
-The expiry card's **Reopen approval** button creates a new 15-minute approval attempt for the same
-unchanged proposal. The new attempt has a different immutable approval ID; the expired attempt
-remains in the incident timeline. Approve or reject the new card normally. A successful approval
-runs the bounded action once, verifies the result, resolves the incident, and posts the formatted
-resolution to Slack.
+```bash
+docker compose cp scripts/demo/backlog-safe-refusal-demo.py api:/tmp/backlog-safe-refusal-demo.py
+docker compose exec -T api python /tmp/backlog-safe-refusal-demo.py
+```
 
-Never commit `.env`, authentication material, webhook URLs, or generated SigNoz resources. The
-only runtime component with mutation capability is the restricted action runner, and every action
-is registered, target-validated, idempotent, policy-gated, and verified.
+It proves that an unhealthy or maxed worker pool is escalated without execution.
+
+## Slack approval buttons
+
+Slack cannot send interactive actions to `localhost`. Start a temporary HTTPS tunnel:
+
+```powershell
+cloudflared tunnel --url http://127.0.0.1:8081
+```
+
+In the Slack app, enable **Interactivity & Shortcuts** and set the request URL to:
+
+```text
+https://<temporary-host>.trycloudflare.com/api/v1/slack/interactions
+```
+
+After setting `SLACK_SIGNING_SECRET`, recreate the API service:
+
+```bash
+docker compose up -d --no-deps --force-recreate api
+```
+
+The API verifies Slack's signature, records the decision, and acknowledges the click immediately.
+n8n resumes the longer remediation asynchronously.
+
+An unanswered approval expires after 15 minutes without executing anything. Reopening it creates
+a new immutable approval identifier while preserving the expired attempt in the incident record.
+
+## Repository layout
+
+```text
+app/                 FastAPI control plane, workload services, policy, and runner
+frontend/            React operations console and workload shop
+mongodb/             Local database initialization
+n8n/workflows/       Incident lifecycle workflow
+codex/               Structured agent output schemas
+scripts/demo/        Reproducible incident scenarios
+signoz/              Local SigNoz Foundry configuration
+docker-compose.yml   Application service topology
+```
+
+## Safety boundaries
+
+- Codex receives read-only SigNoz MCP access.
+- Agent output must match a versioned JSON schema.
+- Only registered actions with exact targets can reach policy.
+- Only the isolated runner can mutate service state.
+- Approval identifiers are immutable and single-use.
+- Every action is idempotent and bounded.
+- Recovery is based on fresh behavior, not command exit status.
+- Failed verification triggers rollback or escalation.
+
+## Built for Agents of SigNoz
+
+Aegis combines end-to-end AI-agent observability, a SigNoz MCP investigation sidekick, an n8n
+incident workflow, and policy-bounded self-healing infrastructure in one local demonstration.
