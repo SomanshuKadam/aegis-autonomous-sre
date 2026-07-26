@@ -235,6 +235,10 @@ docker-compose.yml   Application service topology
 - Recovery is based on fresh behavior, not command exit status.
 - Failed verification triggers rollback or escalation.
 
+## AI assistance disclosure
+
+OpenAI Codex was used to help with the development of this project.
+
 ## Built for Agents of SigNoz
 
 Aegis combines end-to-end AI-agent observability, a SigNoz MCP investigation sidekick, an n8n
